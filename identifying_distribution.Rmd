@@ -1,0 +1,266 @@
+---
+title: "Identifying the probability distribution"
+output: 
+  html_document:
+    code_fold: show
+---
+
+```{r setup, include=FALSE}
+source("global.R")
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE)
+```
+
+Ideally, we'd be able to identify a probability distribution for change in cluster sizes at critical threshold and use that for sensitivity analysis. We could pinpoint what kind of cluster size change is signficant, and use that to label the data so our results are more effective. I'm still working on making this part more adaptable, and trying to make sure I'm not missing anything in setting up the statistical analysis.
+
+```{r}
+all_heights <- readRDS("both_timepoints.Rds")
+
+p2 <- ggplot(all_heights, aes(x = heights, y = size_difference)) + geom_boxplot()
+p2_data <- ggplot_build(p2) %>% extract2("data")
+p2_points <- tibble(heights = all_heights$heights %>% unique(), 
+                    median = p2_data[[1]]$middle, q3 = p2_data[[1]]$upper)
+
+h_x <- p2_points$heights[which(p2_points$median > 10)[1]]
+```
+The first out-of-the-ordinary height is `r h_x` (looking at the third quantile and the median), so we take a look at its probability distribution. There are better ways of identifying a threshold to study further, this is just for investigative purposes.
+
+```{r}
+x <- all_heights %>% filter(heights == h_x) %>% pull(size_difference)
+hist1 <- hist(x, plot = FALSE)
+```
+
+## Setup  
+This is to show an approach we can take when there is sufficient data across the spectrum to feed into functions for automatic distribution finding. In this kind of situation, data isn't too sparse, so we'll run into fewer issues that need to dealt with on a case by case basis.
+
+```{r}
+if (sparseCheck(hist1) == "none") {
+  i <- h_x %>% strsplit(.,split="_") %>% unlist() %>% extract2(2) %>% as.numeric()
+}else {
+  i <- 60 
+}
+x <- cluster_changes <- all_heights %>% filter(h == i) %>% pull(size_difference)
+```
+
+```{r}
+hist_i <- hist(cluster_changes, xlab = "Size difference", col = "mediumblue", 
+               main = paste0("Difference in cluster size between time points 1 and 3, at height ", i))
+```
+
+We shift the data temporarily, so we can find a distribution using functions that are sensitive to this kind of thing. 
+```{r}
+x_shift <- cluster_changes_shift <- x + 1 - min(x)
+hist(cluster_changes_shift, xlab = "Translated size difference (by min size)", col = "lightblue", 
+     main = paste0("Translated difference in cluster size between time points 1 and 3"))
+```
+
+# --------------------------------------------------------------------------------------------------------
+
+## Automatic distribution fitting with GAMLSS
+
+GAMLSS
+
+  * Functions for fitting the Generalized Additive Models for Location Scale and Shape introduced by Rigby and Stasinopoulos (2005)
+  
+  * The models use a distributional regression approach where all the parameters of the conditional distribution of the response variable are modelled using explanatory variables
+
+```{r, warning=FALSE}
+# tp %>% filter(h == 60) %>% pull(size_difference) %>% 
+
+# k = 2 -> the standard AIC
+# type = type of distribution to be tried
+# trace = whether to print during fitting
+# try.gamlss = if gamlssML() fails to fit the model, try gamlss instead
+
+fit_result <- gamlss::fitDist(x, k = 2, type = "realAll", trace = FALSE, try.gamlss = TRUE)
+
+histDist(x, family = fit_result$family)
+```
+
+```{r, warning=FALSE}
+df <- all_heights %>% filter(h == i) %>% dplyr::select(isolate, size_difference) %>% set_colnames(c("x","y"))
+df$x <- 1:nrow(df) # isolates and change in cluster size
+# nonparametric smoothing terms are indicated by pb() for penalized beta splines, cs for smoothing splines, 
+# lo for loess smooth terms, and random or ra for for random terms
+model_df <- gamlss(y ~ pb(x), family = fit_result$family[1], data = df, method = mixed(2,10))
+plot(model_df)
+```
+
+Some of the few problems with this method is that the algorithm may not necessarily converge, and that the result has so far tended towards the more complicated types of distributions. 
+
+## General method for non-sparse datasets: a more manual approach for "traditional" distributions {.tabset}
+
+### Histogram  
+
+```{r}
+h_x2 <- "h_60"
+x2 <- all_heights %>% filter(heights == h_x2) %>% pull(size_difference)
+x_shifted <- x2 + 1 - min(x2)
+hist2 <- hist(x2, xlab = "Size difference", col = "mediumblue", 
+     main = paste0("Difference in cluster size between time points 1 and 3, at height ", h_x2))
+```
+
+### Normal  
+
+```{r}
+fit_norm <- fitdist(x_shifted, "norm", method = "mge")
+plot(fit_norm)
+```
+
+### Weibull  
+
+```{r}
+fit_weibull <- fitdist(x_shifted,  distr = "weibull", method = "mge")
+plot(fit_weibull)
+```
+
+### Exponential  
+
+```{r}
+fit_exp <- fitdist(x_shifted, "exp", method = "mge")
+plot(fit_exp)
+```
+
+### Gamma  
+
+```{r}
+fit_gamma <- fitdist(x_shifted, "gamma", method = "mge")
+plot(fit_gamma)
+```
+
+### Lognormal  
+
+```{r}
+fit_lnorm <- fitdist(x_shifted, "lnorm", method = "mge")
+plot(fit_lnorm)
+```
+
+### Uniform  
+
+```{r}
+fit_unif <- fitdist(x_shifted, "unif", method = "mge")
+plot(fit_unif)
+```
+
+### Beta  
+
+```{r}
+x_bin <- (x2 - min(x2)) / (max(x2) - min(x2))
+fit_beta <- fitdist(x_bin, "beta", method = "mge")
+plot(fit_beta)
+```
+
+### Logistic  
+
+```{r}
+fit_logis <- fitdist(x_shifted, "logis", method = "mge")
+plot(fit_logis)
+```
+
+## Results
+
+Recall: "The Akaike Information Criterion (AIC) is an estimator of out-of-sample prediction error... Given a collection of models for data, the AIC estimates the quality of each model, _relative_ to each of the other models..." (https://en.wikipedia.org/wiki/Akaike_information_criterion)
+
+```{r}
+fitted_models <- list(fit_exp, 
+          fit_lnorm, fit_logis, fit_norm, 
+          fit_unif, fit_weibull) %>% 
+  set_names(c("Exponential",
+              "Lognormal", "Logistic", "Normal", 
+              "Uniform", "Weibull"))
+
+aics <- c(fit_exp$aic, 
+          fit_lnorm$aic, fit_logis$aic, fit_norm$aic, 
+          fit_unif$aic, fit_weibull$aic) %>% 
+  set_names(c("Exponential",
+              "Lognormal", "Logistic", "Normal", 
+              "Uniform", "Weibull"))
+
+best_fit_name <- which.min(aics) %>% names()
+as.data.frame(aics) %>% rownames_to_column() %>% as_tibble() %>% 
+  set_colnames(c("Distribution", "AIC")) %>% kable()
+```
+
+
+The **`r best_fit_name %>% tolower()`** has the lowest AIC, so that distribution might be an adequate fit. Now we try a goodness of fit test to verify. 
+
+# ------------------------------------------------------------------------------
+
+## Goodness of Fit Tests
+
+See https://www.r-bloggers.com/goodness-of-fit-test-in-r/ for details.
+
+For a goodness of fit test:
+
+  $H_0$ = The data is consistent with a `r tolower(best_fit_name)` distribution
+  
+  $H_1$ = The data is not consistent with a `r tolower(best_fit_name)` distribution.
+  
+  
+  In this case, our *reference distribution* is the `r tolower(best_fit_name)`. "A reference distribution is a distribution which we assume fits the data the best."
+  
+  "*Primary distribution* is defined as the actual distribution the data was sampled from. In practice this distribution is unknown."
+
+### Cramer-von Mises Goodness of Fit
+```{r}
+gofTest(x_shifted, test = "cvm", distribution = "lnorm")
+```
+
+### Chi-Squared Goodness of Fit
+
+"The chi-square goodness of fit test is used to compare the observed distribution to an expected distribution." (http://www.sthda.com/english/wiki/chi-square-goodness-of-fit-test-in-r).
+
+We consider a significance level of $\alpha$ = 0.05 (arbitrarily, default). We need to pass as input the candidate distribution, which needs to be a pmf with sum 1.
+
+```{r, echo=TRUE}
+# a vector of probablities from the best_fit distribution, of length(x)
+best_fit <- fitted_models[[best_fit_name]]
+
+# here, we use the dlnorm function, since we're looking at the lognormal
+# there are other functions for each type of traditional distribution
+null_probs <- dlnorm(1:length(x_shifted), 
+                     meanlog = best_fit$estimate[1], 
+                     sdlog = best_fit$estimate[2])
+
+test_A <- chisq.test(x_shifted, 
+                     p = null_probs,
+                     rescale.p = TRUE,
+                     simulate.p.value = TRUE)
+
+# specify the candidate distribution
+# simulate.p.value is TRUE --> use the Monte Carlo algorithm to run the test
+# rescale.p = TRUE --> normalize the distribution so it is a pmf with sum 1.
+test_A
+```
+
+Then if p-value `r test_A$p.value` < 0.05, below the significance level, we reject the null hypothesis, that the candidate distribution is consistent with a lognormal distribution.
+
+This method is a little too manual to be easily adaptable, but I'm still comparing procedures to see which is the more statistically sound. It's a bit of a rabbit warren.
+
+### Hypergeometric distribution
+
+Alternatively, we could look at the data as binary, either a cluster increased in size, or it did not. This might be useful when we have a very sparse set of changes in size, as in the example below. 
+
+```{r}
+h_x2 <- "h_351"
+x2 <- all_heights %>% filter(heights == h_x2) %>% pull(size_difference)
+hist2 <- hist(x2, xlab = "Size difference", col = "mediumblue", 
+              main = paste0("Difference in cluster size between time points 1 and 3, at height ", h_x2))
+```
+
+Note that `r sparseCheck(hist2)` of the histogram bins are empty. When this number is high, we have very sparse dataset, so finding the probability of a cluster's size increasing is tricker.
+
+We might consider a hypergeometric distribution, a probability distribution for binary draws from a bin without replacement (as the cluster sizes are not independent).  
+
+Consider: draw type 1 - the cluster grows in size, and draw type 2 - the cluster stays the same size or shrinks.
+
+I'm still working on this part, but I'm trying not to get too invested in this idea until I've done a little more research into ramifications of looking at this as a binary problem.
+
+
+
+
+
+
+
+
+
+
