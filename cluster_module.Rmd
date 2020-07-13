@@ -1,0 +1,237 @@
+---
+title: "Expanding Cluster Detection"
+output: 
+  html_document:
+    code_fold: show
+---
+
+```{r setup, include=FALSE}
+source("global.R")
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# --------------------------------------------------------------------------------
+
+```{r threshold_files_chunk}
+filenames <- c("3692_2020-04-15_tree-clusters-dm/3692_2020-04-15_thresholds.csv", 
+               "4382_2020-06-04_tree-clusters-dm/4382_2020-06-04_thresholds.csv")
+X <- 1
+Y <- 3
+```
+
+This report looks at the data comparing from  `r filenames[1] %>% separateText(.,"/",2) %>% separateText(.,"_th",1)`, at time point `r X`, to `r filenames[2] %>% separateText(.,"/",2) %>% separateText(.,"_th",1)`, at time point `r Y`. Replace the corresponding text in `threshold_files_chunk` if using different data.
+
+# --------------------------------------------------------------------------------
+
+These are the isolates with designated clusters and corresponding cluster sizes at time point `r X`, for all heights. Sample rows of dataset below.
+
+```{r tpX_data, results='hide'}
+clustersX <- readData(filenames[1]) %>% as_tibble()
+
+sizes_for_tpX <- clusterSizes(clustersX)
+tpX <- isolateClusterSize(clustersX, sizes_for_tpX) %>%
+  set_colnames(c("isolate", "heights", "tpX_clusters", "tpX_sizes"))
+rm(sizes_for_tpX)
+```
+
+```{r tpX_datatable}
+tpX[1:10,] %>% 
+  set_colnames(c("Isolates", "Heights", "Clusters", "Cluster Sizes")) %>% 
+  DT::datatable(., caption = "Sample rows of clusters and sizing", 
+                fillContainer = TRUE, filter = "top", rownames = FALSE, 
+                options = list(pageLength = 50, dom = "ti", scrollY = "500px", 
+                               columnDefs = list(list(className = "dt-center", targets = 1:3))))
+```
+
+These are the isolates with designated clusters and corresponding cluster sizes at time point `r Y`, for all heights. Sample rows of dataset below.
+
+```{r tpY_data, results='hide'}
+clustersY <- readData(filenames[2]) %>% as_tibble()
+
+sizes_for_tpY <- clusterSizes(clustersY)
+tpY <- isolateClusterSize(clustersY, sizes_for_tpY) %>%
+  set_colnames(c("isolate", "heights", "tpY_clusters", "tpY_sizes"))
+rm(sizes_for_tpY)
+```
+
+```{r tpY_datatable}
+tpY[1:10,] %>% 
+  set_colnames(c("Isolates", "Heights", "Clusters", "Cluster Sizes")) %>% 
+  DT::datatable(., caption = "Sample rows of clusters and sizing", 
+                fillContainer = TRUE, filter = "top", rownames = FALSE, 
+                options = list(pageLength = 50, dom = "ti", scrollY = "500px", 
+                               columnDefs = list(list(className = "dt-center", targets = 1:3))))
+```
+
+Some isolates occur in only one of the two time point datasets, so the following is to keep track of this.
+
+```{r}
+# setting up dataframe
+d <- c(clustersX$isolate, clustersY$isolate) %>% unique() %>% 
+  tibble(Isolates = ., TPX = FALSE, TPY = FALSE, Both = FALSE)
+
+# identifying isolates in one or both
+d$TPY[which(d$Isolates %in% clustersY$isolate)] <- TRUE
+d$TPX[which(d$Isolates %in% clustersX$isolate)] <- TRUE
+d$Both[which(d$TPX & d$TPY)] <- TRUE
+
+# preparing dataset for display
+d <- d[order(d$Isolates),]
+d$Isolates <- unique(d$Isolates) %>% sort() %>% factor(d$Isolates, levels = .)
+d$Place <- d$Isolates %>% 
+  lapply(., function(x) as.character(x) %>% separateText(.,"/",1)) %>% unlist()
+d <- d[,c(5,1:4)]
+
+d$TPX %<>% as.character()
+d$TPY %<>% as.character()
+d$Both %<>% as.character()
+vals <- c("True", "False")
+
+d[d == "TRUE"] <- vals[1]
+d[d == "FALSE"] <- vals[2]
+places <- d$Place %>% unique()
+place_colors <- c(rep(c("lightpink","thistle","wheat"), ceiling(length(places)/3)))
+
+# table with colorful cells indicating where isolates are found
+d %>% set_colnames(c("Source", "Isolates", paste0("Found in time point ", X, " dataset"), 
+                     paste0("Found in time point ", Y, " dataset"), "Found in both datasets")) %>% 
+  DT::datatable(., fillContainer = TRUE, filter = "top", rownames = TRUE, 
+                options = list(pageLength = nrow(d), dom = "ti", scrollY = "500px")) %>% 
+  formatStyle(3, backgroundColor = styleEqual(vals, c("lightsteelblue", "gray"))) %>% 
+  formatStyle(4, backgroundColor = styleEqual(vals, c("lightgreen", "gray"))) %>% 
+  formatStyle(5, backgroundColor = styleEqual(vals, c("lightsteelblue", "gray"))) %>% 
+  formatStyle(1, backgroundColor = styleEqual(unique(d$Place), place_colors[1:length(places)]))
+```
+
+
+```{r, echo=FALSE}
+# similar setup to the above table, but using numbers makes for easier comparison in R
+b <- c(clustersX$isolate, clustersY$isolate) %>% unique() %>% 
+  tibble(Isolates = ., TPX = 0, TPY = 0, Both = 0)
+b$TPX[which(b$Isolates %in% clustersX$isolate)] <- 1
+b$TPY[which(b$Isolates %in% clustersY$isolate)] <- 2
+b$Both <- b$TPX + b$TPY
+
+b <- b[order(b$Isolates),]
+m <- table(b$Both) %>% as.data.frame() %>% as_tibble() %>% set_colnames(c("isolates", "type"))
+m$isolates <- c("TPX", "TPY", "Both")
+rm(b)
+```
+
+There are `r m$type[m$isolates == "Both"]` isolates found in the datasets for both time point `r X` and time point `r Y`, `r m$type[m$isolates == "TPX"]` isolates only in the time point `r X` dataset, and `r m$type[m$isolates == "TPY"]` isolates only found in the time point `r Y`.
+
+# --------------------------------------------------------------------------------
+
+The following is a merged dataset of information on all isolates at all heights for both time points. There are labels for clusters that are now part of larger clusters (expanded = `larger`), those that are fragmented (`smaller`), and clusters whose size has not changed (`same`).
+
+```{r}
+# A merged dataset of information from both time points
+
+tp <- full_join(tpX, tpY, by = c("isolate", "heights"))
+tp$tpX_sizes[is.na(tp$tpX_sizes)] <- 0
+tp$tpY_sizes[is.na(tp$tpY_sizes)] <- 0
+
+tp$both <- tp$size_difference <- tp$tpY_sizes - tp$tpX_sizes
+
+h_values <- tp$heights %>% unique()
+num_h <- gsub("h_", "", h_values) %>% as.numeric() %>% tibble(heights = h_values, h = .)
+
+tp <- left_join(tp, num_h, by = "heights")
+tp <- tp[,c(1,9,2:8)]
+
+inds_larger <- tp$both > 0
+inds_same <- tp$both == 0
+inds_smaller <- tp$both < 0
+
+tp$both[inds_larger] <- "larger"
+tp$both[inds_same] <- "same"
+tp$both[inds_smaller] <- "smaller"
+
+tp$tpX_clusters[is.na(tp$tpX_clusters)] <- "NA"
+tp$tpY_clusters[is.na(tp$tpY_clusters)] <- "NA"
+
+saveRDS(tp, "both_timepoints.Rds")
+```
+
+This dataset is too large to show in a table without server-side processing, so here are a few sample rows to see if this is the kind of setup we would like to improve on or remove entirely.
+```{r}
+tp[1:50,c(1,3:9)] %>% # -"Numeric height", 
+  set_colnames(c("Isolates", "Height label", 
+    paste0("Clusters at time point ", X), paste0("Cluster sizes at time point ", X),
+    paste0("Clusters at time point ", Y), paste0("Cluster sizes at time point ", Y),
+    paste0("Cluster size difference (TP ", Y, " - TP ", X, ")"), 
+    "Cluster expansion label")) %>% 
+  DT::datatable(., caption = paste0("Absolute labelling (larger/smaller/same size, ", 
+                                    "even minor size changes are noted)"), 
+                fillContainer = TRUE, filter = "top", rownames = FALSE, 
+                options = list(pageLength = 50, dom = "ti", scrollY = "500px", 
+                               columnDefs = list(list(className = "dt-center", targets = 1:7))))
+```
+
+Table of heights and clusters, with specific (and at the moment arbitrary) requirements. Goal: to identify what kind of change in size can be expected, given the number of isolates at each time point, the number of clusters at a height (will need to check a variety of heights, maybe a randomly selected set), and inflation of false positives due to multiple comparison testing (WIP). 
+
+```{r}
+min_size <- 20  # minimum initial cluster size to filter for
+min_dif <- 100  # minimum change in cluster size to filter for
+```
+
+```{r, warning=FALSE}
+df_expanding <- tp %>% 
+  filter(tpX_sizes >= min_size) %>% 
+  filter(both == "larger") %>% 
+  filter(size_difference > min_dif) %>% 
+  dplyr::select(h, heights, tpX_clusters, tpX_sizes, tpY_clusters, tpY_sizes, size_difference) %>% 
+  unique()
+
+df_expanding[,2:7] %>% # - "Numeric height", 
+  set_colnames(c("Height label", paste0("Cluster at time point ", X), 
+                 paste0("Cluster size at time point ", X), paste0("Cluster at time point ", Y), 
+                 paste0("Cluster size at time point ", Y), "Difference in size")) %>% 
+  DT::datatable(., caption = paste0("Clusters that have size >= ", min_size, 
+                                    " and change in size ", "from TP", X, 
+                                    " to TP", Y, " by at least ", min_dif, " isolates"), 
+                fillContainer = TRUE, filter = "top", rownames = TRUE, 
+                options = list(pageLength = nrow(df_expanding), dom = "ti", scrollY = "500px", 
+                               columnDefs = list(list(className = "dt-center", targets = 0:6))))
+```
+
+# --------------------------------------------------------------------------------
+
+Notes to self on the plot:  
+  * ymax - upper whisker = largest observation less than or equal to upper hinge + 1.5 * IQR  
+  * upper - upper hinge, 75% quantile  
+  * notchupper - upper edge of notch = median + 1.58 * IQR / sqrt(n)  
+  * middle - median, 50% quantile  
+  * notchlower - lower edge of notch = median - 1.58 * IQR / sqrt(n)  
+  * lower - lower hinge, 25% quantile  
+  * ymin - lower whisker = smallest observation greater than or equal to lower hinge - 1.5 * IQR  
+
+```{r, fig.align='center', fig.width=10}
+tp <- tp %>% arrange(., h)
+tp$heights <- factor(tp$heights, levels = unique(tp$heights))
+num_h_vals <- tp$h %>% unique()
+
+# Note: this plot looks at a subset of heights, spaced at even increments (can reduce the 
+# spacing if you want to see more heights). Note that the plot is less clear for smaller increment
+# sizes.
+increment_size <- 50
+tp_subset <- tp %>% filter(h %in% seq(from = 1, to = length(num_h_vals), by = increment_size))
+
+p <- ggplot(tp_subset, aes(x = heights, y = size_difference)) + geom_boxplot()
+p_data <- ggplot_build(p) %>% extract2("data")
+p_points <- tibble(heights = tp_subset$heights %>% unique(), 
+                   median = p_data[[1]]$middle, q3 = p_data[[1]]$upper)
+
+ggplot(tp_subset, aes(x = heights, y = size_difference)) + 
+  geom_boxplot() + 
+  geom_point(data = p_points, aes(x = heights, y = median, color = "red")) + 
+  geom_point(data = p_points, aes(x = heights, y = q3, color = "blue")) +
+  scale_x_discrete(guide = guide_axis(check.overlap = TRUE)) +
+  scale_color_manual(name = "Point color", values = c("red"="red","blue"="blue"), 
+                     labels = c("Quantile 3", "Median")) +
+  xlab("Heights") + ylab("Change in cluster size") + 
+  ggtitle("Change in cluster across thresholds, key values")
+```
+
+
+
