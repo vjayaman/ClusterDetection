@@ -232,7 +232,7 @@ test_A <- chisq.test(x_shifted,
 test_A
 ```
 
-Then if p-value `r test_A$p.value` < 0.05, below the significance level, we reject the null hypothesis, that the candidate distribution is consistent with a lognormal distribution.
+Then if p-value `r test_A$p.value` < 0.05, below the significance level, we reject the null hypothesis, that the candidate distribution is consistent with a logistic distribution.
 
 This method is a little too manual to be easily adaptable, but I'm still comparing procedures to see which is the more statistically sound. It's a bit of a rabbit warren.
 
