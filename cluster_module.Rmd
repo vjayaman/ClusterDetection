@@ -13,20 +13,30 @@ knitr::opts_chunk$set(echo = TRUE)
 # --------------------------------------------------------------------------------
 
 ```{r threshold_files_chunk}
-filenames <- c("3692_2020-04-15_tree-clusters-dm/3692_2020-04-15_thresholds.csv", 
-               "4382_2020-06-04_tree-clusters-dm/4382_2020-06-04_thresholds.csv")
+campy_data <- c("MergedFinal_332calls_4203genomes_clusters.tsv", 
+                "MergedFinal_332calls_5075genomes_clusters.tsv")
 X <- 1
-Y <- 3
+Y <- 2
+
+timepoint1 <- read.csv(file = campy_data[1], numerals = "no.loss", 
+                       stringsAsFactors = FALSE, sep = "\t") %>% as_tibble()
+colnames(timepoint1) %<>% gsub(pattern = "genome", replacement = "isolate", x = .) %>% 
+  gsub(pattern = "X", replacement = "h_", x = .)
+
+timepoint2 <- read.csv(file = campy_data[2], numerals = "no.loss", 
+                       stringsAsFactors = FALSE, sep = "\t") %>% as_tibble()
+colnames(timepoint2) %<>% gsub(pattern = "genome", replacement = "isolate", x = .) %>% 
+  gsub(pattern = "X", replacement = "h_", x = .)
 ```
 
-This report looks at the data comparing from  `r filenames[1] %>% separateText(.,"/",2) %>% separateText(.,"_th",1)`, at time point `r X`, to `r filenames[2] %>% separateText(.,"/",2) %>% separateText(.,"_th",1)`, at time point `r Y`. Replace the corresponding text in `threshold_files_chunk` if using different data.
+This report looks at the data comparing from  `r campy_data[1] %>% separateText(., "genomes", 1) %>% separateText(., "Final_", 2)`, at time point `r X`, to `r campy_data[2] %>% separateText(., "genomes", 1) %>% separateText(., "Final_", 2)`, at time point `r Y`. Replace the corresponding text in `threshold_files_chunk` if using different data.
 
 # --------------------------------------------------------------------------------
 
 These are the isolates with designated clusters and corresponding cluster sizes at time point `r X`, for all heights. Sample rows of dataset below.
 
 ```{r tpX_data, results='hide'}
-clustersX <- readData(filenames[1]) %>% as_tibble()
+clustersX <- timepoint1
 
 sizes_for_tpX <- clusterSizes(clustersX)
 tpX <- isolateClusterSize(clustersX, sizes_for_tpX) %>%
@@ -46,7 +56,7 @@ tpX[1:10,] %>%
 These are the isolates with designated clusters and corresponding cluster sizes at time point `r Y`, for all heights. Sample rows of dataset below.
 
 ```{r tpY_data, results='hide'}
-clustersY <- readData(filenames[2]) %>% as_tibble()
+clustersY <- timepoint2 #readData(filenames[2]) %>% as_tibble()
 
 sizes_for_tpY <- clusterSizes(clustersY)
 tpY <- isolateClusterSize(clustersY, sizes_for_tpY) %>%
@@ -67,7 +77,7 @@ Some isolates occur in only one of the two time point datasets, so the following
 
 ```{r}
 # setting up dataframe
-d <- c(clustersX$isolate, clustersY$isolate) %>% unique() %>% 
+d <- c(clustersX$isolate, clustersY$isolate) %>% unique() %>%
   tibble(Isolates = ., TPX = FALSE, TPY = FALSE, Both = FALSE)
 
 # identifying isolates in one or both
@@ -78,9 +88,6 @@ d$Both[which(d$TPX & d$TPY)] <- TRUE
 # preparing dataset for display
 d <- d[order(d$Isolates),]
 d$Isolates <- unique(d$Isolates) %>% sort() %>% factor(d$Isolates, levels = .)
-d$Place <- d$Isolates %>% 
-  lapply(., function(x) as.character(x) %>% separateText(.,"/",1)) %>% unlist()
-d <- d[,c(5,1:4)]
 
 d$TPX %<>% as.character()
 d$TPY %<>% as.character()
@@ -89,24 +96,21 @@ vals <- c("True", "False")
 
 d[d == "TRUE"] <- vals[1]
 d[d == "FALSE"] <- vals[2]
-places <- d$Place %>% unique()
-place_colors <- c(rep(c("lightpink","thistle","wheat"), ceiling(length(places)/3)))
 
 # table with colorful cells indicating where isolates are found
-d %>% set_colnames(c("Source", "Isolates", paste0("Found in time point ", X, " dataset"), 
-                     paste0("Found in time point ", Y, " dataset"), "Found in both datasets")) %>% 
-  DT::datatable(., fillContainer = TRUE, filter = "top", rownames = TRUE, 
-                options = list(pageLength = nrow(d), dom = "ti", scrollY = "500px")) %>% 
-  formatStyle(3, backgroundColor = styleEqual(vals, c("lightsteelblue", "gray"))) %>% 
-  formatStyle(4, backgroundColor = styleEqual(vals, c("lightgreen", "gray"))) %>% 
-  formatStyle(5, backgroundColor = styleEqual(vals, c("lightsteelblue", "gray"))) %>% 
-  formatStyle(1, backgroundColor = styleEqual(unique(d$Place), place_colors[1:length(places)]))
+d %>% set_colnames(c("Isolates", paste0("Found in time point ", X, " dataset"),
+                     paste0("Found in time point ", Y, " dataset"), "Found in both datasets")) %>%
+  DT::datatable(., fillContainer = TRUE, filter = "top", rownames = TRUE,
+                options = list(pageLength = nrow(d), dom = "ti", scrollY = "500px")) %>%
+  formatStyle(2, backgroundColor = styleEqual(vals, c("lightsteelblue", "gray"))) %>%
+  formatStyle(3, backgroundColor = styleEqual(vals, c("lightgreen", "gray"))) %>%
+  formatStyle(4, backgroundColor = styleEqual(vals, c("lightsteelblue", "gray")))
 ```
 
 
 ```{r, echo=FALSE}
 # similar setup to the above table, but using numbers makes for easier comparison in R
-b <- c(clustersX$isolate, clustersY$isolate) %>% unique() %>% 
+b <- c(clustersX$isolate, clustersY$isolate) %>% unique() %>%
   tibble(Isolates = ., TPX = 0, TPY = 0, Both = 0)
 b$TPX[which(b$Isolates %in% clustersX$isolate)] <- 1
 b$TPY[which(b$Isolates %in% clustersY$isolate)] <- 2
@@ -114,11 +118,11 @@ b$Both <- b$TPX + b$TPY
 
 b <- b[order(b$Isolates),]
 m <- table(b$Both) %>% as.data.frame() %>% as_tibble() %>% set_colnames(c("isolates", "type"))
-m$isolates <- c("TPX", "TPY", "Both")
-rm(b)
-```
+x <- m$isolates %>% as.character()
+m$isolates <- replace(x, x==1, "TPX") %>% replace(., x==2, "TPY") %>% replace(., x==3, "Both")
 
-There are `r m$type[m$isolates == "Both"]` isolates found in the datasets for both time point `r X` and time point `r Y`, `r m$type[m$isolates == "TPX"]` isolates only in the time point `r X` dataset, and `r m$type[m$isolates == "TPY"]` isolates only found in the time point `r Y`.
+# There are `r m$type[m$isolates == "Both"]` isolates found in the datasets for both time point `r X` and time point `r Y`, `r m$type[m$isolates == "TPX"]` isolates only in the time point `r X` dataset, and `r m$type[m$isolates == "TPY"]` isolates only found in the time point `r Y`.
+```
 
 # --------------------------------------------------------------------------------
 
@@ -155,7 +159,7 @@ saveRDS(tp, "both_timepoints.Rds")
 
 This dataset is too large to show in a table without server-side processing, so here are a few sample rows to see if this is the kind of setup we would like to improve on or remove entirely.
 ```{r}
-tp[1:50,c(1,3:9)] %>% # -"Numeric height", 
+tp[1:100,c(1,3:9)] %>% # -"Numeric height", 
   set_colnames(c("Isolates", "Height label", 
     paste0("Clusters at time point ", X), paste0("Cluster sizes at time point ", X),
     paste0("Clusters at time point ", Y), paste0("Cluster sizes at time point ", Y),
@@ -206,16 +210,22 @@ Notes to self on the plot:
   * lower - lower hinge, 25% quantile  
   * ymin - lower whisker = smallest observation greater than or equal to lower hinge - 1.5 * IQR  
 
-```{r, fig.align='center', fig.width=10}
+```{r}
 tp <- tp %>% arrange(., h)
 tp$heights <- factor(tp$heights, levels = unique(tp$heights))
 num_h_vals <- tp$h %>% unique()
+```
 
+Note that "negative changes in cluster size" are because
+
+```{r, fig.align='center', fig.width=10}
 # Note: this plot looks at a subset of heights, spaced at even increments (can reduce the 
 # spacing if you want to see more heights). Note that the plot is less clear for smaller increment
 # sizes.
-increment_size <- 50
-tp_subset <- tp %>% filter(h %in% seq(from = 1, to = length(num_h_vals), by = increment_size))
+increment_size <- 1
+tp_subset <- tp %>% filter(h %in% seq(from = 1, to = 150, by = 2))
+# tp_subset <- tp %>% filter(h %in% 1:100)
+#%>% filter(h %in% seq(from = 1, to = length(num_h_vals), by = increment_size))
 
 p <- ggplot(tp_subset, aes(x = heights, y = size_difference)) + geom_boxplot()
 p_data <- ggplot_build(p) %>% extract2("data")

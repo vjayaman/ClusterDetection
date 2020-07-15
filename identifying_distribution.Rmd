@@ -202,7 +202,7 @@ For a goodness of fit test:
 
 ### Cramer-von Mises Goodness of Fit
 ```{r}
-gofTest(x_shifted, test = "cvm", distribution = "lnorm")
+gofTest(x_shifted, test = "cvm", distribution = "logis")
 ```
 
 ### Chi-Squared Goodness of Fit
@@ -215,11 +215,11 @@ We consider a significance level of $\alpha$ = 0.05 (arbitrarily, default). We n
 # a vector of probablities from the best_fit distribution, of length(x)
 best_fit <- fitted_models[[best_fit_name]]
 
-# here, we use the dlnorm function, since we're looking at the lognormal
+# here, we use the dlogis function, since we're looking at the logistic
 # there are other functions for each type of traditional distribution
-null_probs <- dlnorm(1:length(x_shifted), 
-                     meanlog = best_fit$estimate[1], 
-                     sdlog = best_fit$estimate[2])
+null_probs <- dlogis(1:length(x_shifted), 
+                     location = best_fit$estimate[1], 
+                     scale = best_fit$estimate[2])
 
 test_A <- chisq.test(x_shifted, 
                      p = null_probs,
@@ -238,29 +238,12 @@ This method is a little too manual to be easily adaptable, but I'm still compari
 
 ### Hypergeometric distribution
 
-Alternatively, we could look at the data as binary, either a cluster increased in size, or it did not. This might be useful when we have a very sparse set of changes in size, as in the example below. 
+Alternatively, we could look at the data as binary, either a cluster increased in size, or it did not. This might be useful when we have a very sparse set of changes in size.
 
-```{r}
-h_x2 <- "h_351"
-x2 <- all_heights %>% filter(heights == h_x2) %>% pull(size_difference)
-hist2 <- hist(x2, xlab = "Size difference", col = "mediumblue", 
-              main = paste0("Difference in cluster size between time points 1 and 3, at height ", h_x2))
-```
-
-Note that `r sparseCheck(hist2)` of the histogram bins are empty. When this number is high, we have very sparse dataset, so finding the probability of a cluster's size increasing is tricker.
+When the number of histogram bins is high, we have very sparse dataset, so finding the probability of a cluster's size increasing is tricker.
 
 We might consider a hypergeometric distribution, a probability distribution for binary draws from a bin without replacement (as the cluster sizes are not independent).  
 
-Consider: draw type 1 - the cluster grows in size, and draw type 2 - the cluster stays the same size or shrinks.
+Consider: draw type 1 - the cluster grows in size, and draw type 2 - the cluster stays the same size or loses an isolate to another cluster.
 
 I'm still working on this part, but I'm trying not to get too invested in this idea until I've done a little more research into ramifications of looking at this as a binary problem.
-
-
-
-
-
-
-
-
-
-

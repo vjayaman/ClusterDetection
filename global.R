@@ -24,14 +24,16 @@ readData <- function(filename) {
 # 2) clusters and cluster sizes at all height
 # output: a melted tibble
 isolateClusterSize <- function(clusters, sizes) {
+  
   df_clusters <- reshape2::melt(clusters, id.vars = "isolate") %>% 
-    as_tibble() %>% 
-    set_colnames(c("isolate", "height", "cluster"))
+    as_tibble() %>% set_colnames(c("isolate", "height", "cluster"))
+  
   df_sizes <- reshape2::melt(sizes, id.vars = "cluster") %>% 
-    as_tibble() %>% 
-    set_colnames(c("cluster", "height", "size"))
+    as_tibble() %>% set_colnames(c("cluster", "height", "size"))
+  
   df_both <- left_join(df_clusters, df_sizes, by = c("height", "cluster"))
   df_both$height <- as.character(df_both$height)
+  
   return(df_both)
 }
 
