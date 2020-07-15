@@ -67,5 +67,34 @@ sparseCheck <- function(hist_x) {
   return(sparse_val)
 }
 
+boxplotSubsetPoints <- function(df) {
+  p <- ggplot(df, aes(x = heights, y = size_difference)) + geom_boxplot()
+  p_data <- ggplot_build(p) %>% extract2("data")
+  p_points <- tibble(heights = df$heights %>% unique(), 
+                     median = p_data[[1]]$middle, q3 = p_data[[1]]$upper)
+  return(p_points)
+}
+
+boxplotSubset <- function(df, title_sec) {
+  p_points <- boxplotSubsetPoints(df)
+  
+  ggplot(df, aes(x = heights, y = size_difference)) + 
+    geom_boxplot() + 
+    geom_point(data = p_points, aes(x = heights, y = median, color = "red")) + 
+    geom_point(data = p_points, aes(x = heights, y = q3, color = "blue")) +
+    scale_x_discrete(guide = guide_axis(check.overlap = TRUE)) +
+    scale_color_manual(name = "Point color", values = c("red"="red","blue"="blue"), 
+                       labels = c("Quantile 3", "Median")) +
+    xlab("Heights") + ylab("Change in cluster size") + 
+    ggtitle(paste0("Change in cluster across thresholds", title_sec)) %>% return()
+}
+
+
+
+
+
+
+
+
 
 

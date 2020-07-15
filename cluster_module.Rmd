@@ -56,7 +56,7 @@ tpX[1:10,] %>%
 These are the isolates with designated clusters and corresponding cluster sizes at time point `r Y`, for all heights. Sample rows of dataset below.
 
 ```{r tpY_data, results='hide'}
-clustersY <- timepoint2 #readData(filenames[2]) %>% as_tibble()
+clustersY <- timepoint2
 
 sizes_for_tpY <- clusterSizes(clustersY)
 tpY <- isolateClusterSize(clustersY, sizes_for_tpY) %>%
@@ -166,7 +166,7 @@ tp[1:100,c(1,3:9)] %>% # -"Numeric height",
     paste0("Cluster size difference (TP ", Y, " - TP ", X, ")"), 
     "Cluster expansion label")) %>% 
   DT::datatable(., caption = paste0("Absolute labelling (larger/smaller/same size, ", 
-                                    "even minor size changes are noted)"), 
+                                    "even minor size changes are noted), the first 100 rows"), 
                 fillContainer = TRUE, filter = "top", rownames = FALSE, 
                 options = list(pageLength = 50, dom = "ti", scrollY = "500px", 
                                columnDefs = list(list(className = "dt-center", targets = 1:7))))
@@ -216,32 +216,65 @@ tp$heights <- factor(tp$heights, levels = unique(tp$heights))
 num_h_vals <- tp$h %>% unique()
 ```
 
-Note that "negative changes in cluster size" are because
+Note that "negative changes in cluster size" are because some isolates are clustered into different, smaller clusters at the second time point than at they are at the first time point.
 
-```{r, fig.align='center', fig.width=10}
-# Note: this plot looks at a subset of heights, spaced at even increments (can reduce the 
-# spacing if you want to see more heights). Note that the plot is less clear for smaller increment
-# sizes.
-increment_size <- 1
-tp_subset <- tp %>% filter(h %in% seq(from = 1, to = 150, by = 2))
-# tp_subset <- tp %>% filter(h %in% 1:100)
-#%>% filter(h %in% seq(from = 1, to = length(num_h_vals), by = increment_size))
+## Boxplots of cluster size changes {.tabset}
 
-p <- ggplot(tp_subset, aes(x = heights, y = size_difference)) + geom_boxplot()
-p_data <- ggplot_build(p) %>% extract2("data")
-p_points <- tibble(heights = tp_subset$heights %>% unique(), 
-                   median = p_data[[1]]$middle, q3 = p_data[[1]]$upper)
-
-ggplot(tp_subset, aes(x = heights, y = size_difference)) + 
-  geom_boxplot() + 
-  geom_point(data = p_points, aes(x = heights, y = median, color = "red")) + 
-  geom_point(data = p_points, aes(x = heights, y = q3, color = "blue")) +
-  scale_x_discrete(guide = guide_axis(check.overlap = TRUE)) +
-  scale_color_manual(name = "Point color", values = c("red"="red","blue"="blue"), 
-                     labels = c("Quantile 3", "Median")) +
-  xlab("Heights") + ylab("Change in cluster size") + 
-  ggtitle("Change in cluster across thresholds, key values")
+```{r}
+# Note: this plot looks at a subset of heights, spaced at even increments (can reduce the spacing 
+# if you want to see more heights). Note that the plot is less clear for smaller increment sizes.
+# increment_size <- 1
+height_list <- tp$heights %>% unique()
 ```
 
+```{r, fig.align='center', fig.width=10}
+tp %>% filter(heights %in% height_list[seq(1, 274, 2)]) %>% boxplotSubset(., ", incremented heights")
+```
+
+
+### Heights 1 - 50
+```{r, fig.align='center', fig.width=10}
+tp %>% filter(heights %in% height_list[1:50]) %>% boxplotSubset(., ", heights 1-50")
+```
+
+### Heights 51 - 100
+```{r, fig.align='center', fig.width=10}
+tp %>% filter(heights %in% height_list[51:100]) %>% boxplotSubset(., ", heights 51-100")
+```
+
+### Heights 101 - 150
+```{r, fig.align='center', fig.width=10}
+tp %>% filter(heights %in% height_list[101:150]) %>% boxplotSubset(., ", heights 101-150")
+```
+
+### Heights 151 - 200
+```{r, fig.align='center', fig.width=10}
+tp %>% filter(heights %in% height_list[151:200]) %>% boxplotSubset(., ", heights 151-200")
+```
+
+### Heights 201 - 274
+```{r, fig.align='center', fig.width=10}
+tp %>% filter(heights %in% height_list[201:274]) %>% boxplotSubset(., ", heights 201-274")
+```
+
+Example of data that results in a smaller cluster at time point 2 (h_7 in the above plot).
+
+```{r}
+smaller_eg <- tp %>% dplyr::select(-h) %>% 
+  filter(heights == "h_7")
+smaller_eg[order(smaller_eg$both, decreasing = TRUE),] %>%  
+  set_colnames(c("Isolates", "Height label", 
+                 paste0("Clusters at time point ", X), 
+                 paste0("Cluster sizes at time point ", X), 
+                 paste0("Clusters at time point ", Y), 
+                 paste0("Cluster sizes at time point ", Y), 
+                 paste0("Cluster size difference (TP ", Y, " - TP ", X, ")"), 
+                 "Cluster expansion label")) %>% 
+  DT::datatable(., caption = paste0("Absolute labelling (larger/smaller/same size, ", 
+                                    "even minor size changes are noted)"), 
+                fillContainer = TRUE, filter = "top", rownames = FALSE, 
+                options = list(pageLength = 50, dom = "ti", scrollY = "500px", 
+                               columnDefs = list(list(className = "dt-center", targets = 1:7))))
+```
 
 
