@@ -1,0 +1,571 @@
+---
+title: "Multistrain cluster monitoring"
+output: 
+  html_document:
+    code_fold: hide
+---
+
+```{r setup, include=FALSE}
+source("global.R")
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# --------------------------------------------------------------------------------
+
+```{r threshold_files_chunk}
+campy_data <- c("MergedFinal_332calls_4203genomes_clusters.tsv", #"timepoint1_synthetic.tsv", 
+                "MergedFinal_332calls_5075genomes_clusters.tsv")
+
+X <- 1
+Y <- 2
+
+timepoint1 <- read.csv(file = campy_data[1], numerals = "no.loss",
+                       stringsAsFactors = FALSE, sep = "\t") %>% as_tibble()
+colnames(timepoint1) %<>% gsub(pattern = "genome", replacement = "isolate", x = .) %>%
+  gsub(pattern = "X", replacement = "h_", x = .)
+
+timepoint2 <- read.csv(file = campy_data[2], numerals = "no.loss", 
+                       stringsAsFactors = FALSE, sep = "\t") %>% as_tibble()
+colnames(timepoint2) %<>% gsub(pattern = "genome", replacement = "isolate", x = .) %>% 
+  gsub(pattern = "X", replacement = "h_", x = .)
+```
+
+
+```{r tpX_data, results='hide'}
+# These are the isolates with designated clusters and corresponding cluster sizes at time point `r X`, for all heights.  
+sizes_for_tpX <- clusterSizes(timepoint1)
+tpX <- isolateClusterSize(timepoint1, sizes_for_tpX) %>%
+  set_colnames(c("isolate", "heights", "tpX_clusters", "tpX_sizes"))
+```
+
+
+```{r tpY_data, results='hide'}
+# These are the isolates with designated clusters and corresponding cluster sizes at time point `r Y`, for all heights.  
+sizes_for_tpY <- clusterSizes(timepoint2)
+tpY <- isolateClusterSize(timepoint2, sizes_for_tpY) %>%
+  set_colnames(c("isolate", "heights", "tpY_clusters", "tpY_sizes"))
+```
+
+Some isolates occur in only one of the two time point datasets, so the following is to keep track of this.
+
+```{r}
+# setting up dataframe
+d <- c(timepoint1$isolate, timepoint2$isolate) %>% unique() %>%
+  tibble(Isolates = ., TPX = FALSE, TPY = FALSE, Both = FALSE)
+
+# identifying isolates in one or both
+d$TPY[which(d$Isolates %in% timepoint2$isolate)] <- TRUE
+d$TPX[which(d$Isolates %in% timepoint1$isolate)] <- TRUE
+d$Both[which(d$TPX & d$TPY)] <- TRUE
+
+# preparing dataset for display
+d <- d[order(d$Isolates),]
+d$Isolates <- unique(d$Isolates) %>% sort() %>% factor(d$Isolates, levels = .)
+
+d$TPX %<>% as.character()
+d$TPY %<>% as.character()
+d$Both %<>% as.character()
+vals <- c("True", "False")
+
+d[d == "TRUE"] <- vals[1]
+d[d == "FALSE"] <- vals[2]
+
+# table with colorful cells indicating where isolates are found
+d %>% set_colnames(c("Isolates", paste0("Found in time point ", X, " dataset"),
+                     paste0("Found in time point ", Y, " dataset"), "Found in both datasets")) %>%
+  DT::datatable(., fillContainer = TRUE, filter = "top", rownames = TRUE,
+                options = list(pageLength = nrow(d), dom = "ti", scrollY = "500px")) %>%
+  formatStyle(2, backgroundColor = styleEqual(vals, c("lightsteelblue", "gray"))) %>%
+  formatStyle(3, backgroundColor = styleEqual(vals, c("lightgreen", "gray"))) %>%
+  formatStyle(4, backgroundColor = styleEqual(vals, c("lightsteelblue", "gray")))
+```
+
+### Filtered to show only novel genomes
+
+```{r}
+d[which(d$TPX == "False"),] %>% 
+  set_colnames(c("Isolates", paste0("Found in time point ", X, " dataset"),
+                     paste0("Found in time point ", Y, " dataset"), "Found in both datasets")) %>%
+  DT::datatable(., fillContainer = TRUE, filter = "top", rownames = TRUE,
+                options = list(pageLength = nrow(d), dom = "ti", scrollY = "500px")) %>%
+  formatStyle(2, backgroundColor = styleEqual(vals, c("lightsteelblue", "gray"))) %>%
+  formatStyle(3, backgroundColor = styleEqual(vals, c("lightgreen", "gray"))) %>%
+  formatStyle(4, backgroundColor = styleEqual(vals, c("lightsteelblue", "gray")))
+```
+
+```{r}
+# isolates at time point 2 and not time point 1
+isolates_t2 <- d$Isolates[which(d$TPX == "False")] %>% as.character()
+# isolates at time point 1
+isolates_t1 <- d$Isolates[which(d$TPX == "True")] %>% as.character()
+```
+
+Want to find the first threshold where a new genome (added at time point 2) is part of a multistrain cluster that includes genomes from time point 1.  
+
+  1. isolate_k is the k-th isolate of those that are introduced at time point 2  
+  
+  2. we filter the time point 2 dataset to only contain isolate_k and all height-cluster pairs where isolate_k is found in a cluster of size > 1  
+  
+      + we call this filtered dataset the "candidate set"  
+  
+  3. then for each row of the candidate set (each height-cluster pair), we filter the time point 2 dataset to show all isolates found in the selected cluster at the selected height - "candidate isolates"  
+      + if any of these isolates were present in the time point 1 dataset, we return isolate_k-height-cluster as a success  
+      + if none of the isolates were present in the time point 1 dataset, we move onto the next height-cluster pair in the candidate set  
+
+```{r novel_absorption, results='hide'}
+print("Identifying isolates found at both TP1 and TP2 ...")
+set3 <- lapply(colnames(timepoint2)[-1], function(h) {
+  set1 <- timepoint2 %>% filter(isolate %in% isolates_t1) %>% dplyr::select(all_of(h)) %>% unique()
+  set2 <- timepoint2 %>% filter(isolate %in% isolates_t2) %>% dplyr::select(all_of(h)) %>% unique()
+  intersect(set1, set2) %>% unlist(., use.names = FALSE) %>% return()
+}) %>% set_names(colnames(timepoint2)[-1])
+
+print("Generating a dataset where we only keep clusters that have isolates at both TP1 and TP2 ...")
+tmp <- lapply(names(set3), function(h) {
+  tpY %>% filter(heights == h) %>% filter(tpY_clusters %in% set3[[h]]) %>% return()
+}) %>% bind_rows()
+
+print("Finding the first heights at which each novel genome is absorbed into an existing cluster ...")
+novel_absorbed_init <- lapply(1:length(isolates_t2), function(k) {
+  isolate_k <- isolates_t2[k]
+  tmp %>% filter(isolate %in% isolate_k) %>% filter(tpY_sizes > 1) %>% head(., 1) %>% return()
+}) %>% bind_rows() %>% set_colnames(c("isolate", "heights", "clusters", "cluster_sizes"))
+```
+
+## Novel Genome Absorption {.tabset}
+
+```{r}
+novel_absorbed <- novel_absorbed_init
+novel_absorbed$h <- lapply(novel_absorbed$heights, function(h) strsplit(h, split = "_") %>% unlist() %>% 
+                 extract2(2) %>% as.numeric) %>% unlist()
+
+novel_absorbed$isolates_num <- 1:nrow(novel_absorbed)
+
+novel_absorbed <- novel_absorbed[,c("isolates_num", "isolate", "heights", "h", "clusters", "cluster_sizes")] %>% 
+  set_colnames(c("Genome_number", "New_genome_at_T2", "Height_char", 
+                 "Height_num", "Cluster", "Cluster_size"))
+
+dfx <- table(novel_absorbed$Height_char) %>% sort(., decreasing = TRUE) %>% as.data.frame() %>% 
+  as_tibble() %>% set_colnames(c("Height_char", "Frequency_of_height_in_table"))
+dfx$Height_char %<>% as.character()
+
+novel_absorbed <- left_join(novel_absorbed, dfx, by = "Height_char")
+
+novel_absorbed %>% set_colnames(gsub("_", " ", colnames(novel_absorbed))) %>% 
+  DT::datatable(., fillContainer = TRUE, filter = "top", rownames = FALSE, 
+                options = list(pageLength = nrow(novel_absorbed), dom = "ti", scrollY = "500px", 
+                               columnDefs = list(list(className = "dt-center", targets = 0:6))))
+```
+
+### Raw data
+
+```{r, fig.align='center', fig.width=10}
+h_values <- novel_absorbed$Height_char %>% table() %>% sort(., decreasing = TRUE) %>% names()
+
+{ggplot(novel_absorbed, aes(x = Genome_number, y = Height_num, 
+                            size = Cluster_size, color = Frequency_of_height_in_table)) + 
+    geom_point(alpha = 0.5) + 
+    xlab("Novel genomes (at T2)") + ylab("Threshold (at T2)") +
+    labs(color = "Frequency of height") +
+    scale_color_gradient(low = "lightblue", high = "darkblue") +
+    ggtitle(paste0("Results of the table above"))} #%>% 
+```
+
+The heights at which the novel genomes are absorbed into clusters are, in order: 
+The top 10 heights in terms of novel genome absorption are, in order, **`r lapply(h_values[1:10], function(h) substr(h, 3, nchar(h))) %>% unlist() %>% paste0(., collapse = ", ")`**.
+
+### Filtered by min and max cluster size
+
+```{r, fig.align='center', fig.width=10}
+min_size <- 10
+max_size <- 1000
+sig_clusters <- novel_absorbed %>%
+  filter(Cluster_size >= min_size) %>%
+  filter(Cluster_size < max_size) %>%
+  filter(Height_num > 0)
+
+h_values_filtered <- sig_clusters$Height_char %>% table() %>% sort(., decreasing = TRUE) %>% names()
+
+# {
+  ggplot(sig_clusters, aes(x = Genome_number, y = Height_num, 
+                           size = Cluster_size, color = Frequency_of_height_in_table)) + 
+    geom_point(alpha = 0.5) + 
+    xlab("Novel genomes (at T2)") + ylab("Threshold (at T2)") + 
+    labs(color = "Frequency of height") + 
+    scale_color_gradient(low = "lightblue", high = "darkblue") + 
+    ggtitle(paste0("Results filtered to only keep clusters of size >= ", min_size, " and < ", max_size))
+  # } %>% 
+  # ggplotly()
+```
+
+The top 10 heights in terms of novel genome absorption (when looking at clusters with sizes in [10,1000)) are, in order, **`r lapply(h_values_filtered[1:10], function(h) substr(h, 3, nchar(h))) %>% unlist() %>% paste0(., collapse = ", ")`**.
+
+## Notable results
+
+```{r}
+key_clusters <- novel_absorbed %>% 
+  dplyr::arrange(Height_num, Cluster) %>% 
+  dplyr::select(Height_char, Cluster) %>% 
+  unique()
+
+cluster_changes <- lapply(1:nrow(key_clusters), function(i) {
+  # each row is a height-cluster pair, call HC
+  h <- key_clusters$Height_char[i]
+  cl <- key_clusters$Cluster[i]
+  
+  # given HC, finds the corresponding isolates at TP2
+  key_isolates <- timepoint2 %>% dplyr::select(isolate, all_of(h)) %>% 
+    set_colnames(c("isolate","h_x")) %>% 
+    filter(h_x == cl)# %>% pull(isolate)
+  
+  # filter TP1 dataset - using height and isolates found at TP2
+  tp1_clusters <- timepoint1 %>% 
+    filter(isolate %in% key_isolates$isolate) %>% 
+    dplyr::select(any_of(h))
+  
+  # if the cluster existed at TP1, obtain "old" cluster label and size
+  if (ncol(tp1_clusters) > 0) {
+    orig_clusters <- tp1_clusters %>% table() %>% as_tibble() %>% 
+      set_colnames(c("Original_cluster","Original_cluster_size"))
+    in_height <- nrow(tp1_clusters)
+    orig_c_num <- nrow(orig_clusters)
+  }else {
+    orig_clusters <- tibble("Original_cluster" = NA, "Original_cluster_size" = NA)
+    orig_c_num <- in_height <- 0
+  }
+  
+  # bind original cluster data to new cluster label
+  key_clusters %>% filter((Height_char %in% h) & (Cluster %in% cl)) %>% 
+    bind_cols(., orig_clusters, Number_original_clusters = orig_c_num, 
+              Total_original_cluster_size = in_height) %>% return()
+  
+}) %>% bind_rows()
+
+df_tracked <- merge(novel_absorbed, cluster_changes, by = c("Height_char", "Cluster")) %>% as_tibble()
+
+df_tracked$Size_dif <- df_tracked$Cluster_size - df_tracked$Original_cluster_size
+df_tracked$Total_size_dif <- df_tracked$Cluster_size - df_tracked$Total_original_cluster_size
+
+cname_ordering <- c("New_genome_at_T2", "Height_num", "Height_char", 
+                    "Frequency_of_height_in_table", "Cluster", "Cluster_size", 
+                    "Number_original_clusters", "Original_cluster", "Original_cluster_size", 
+                    "Total_original_cluster_size", "Size_dif", "Total_size_dif")
+df_tracked <- df_tracked[,cname_ordering]
+```
+
+
+```{r}
+df_tracked %>% 
+  arrange(Height_char, Cluster, -Size_dif) %>% 
+  set_colnames(c("Novel genome (at T2)", "Height (numeric)", "Height (characters)", 
+                 "Frequency of height in table", "Cluster", "Cluster size", 
+                 "Number of original clusters", "Original cluster", "Original cluster size", 
+                 "Total size of original clusters", "Individual cluster size differences", 
+                 "Total cluster size differences")) %>% 
+  DT::datatable(., fillContainer = TRUE, filter = "top", rownames = FALSE, 
+                options = list(pageLength = nrow(df_tracked), dom = "ti", 
+                               scrollY = "500px", 
+                               columnDefs = list(list(className = "dt-center", targets = 1:11))))
+
+```
+
+Exception to the general scenario:  
+  * Cluster x at TP2 contains isolates found in clusters t, u, v at TP1. Then each cluster size difference doesn't illustrate this, and the "total cluster size change" does  
+  
+  * e.g.  
+      - consider cluster 393 found in TP2 at threshold h_29, which has size 53 (including the novel genomes and TP1 isolates)  
+      - the TP1 isolates in this cluster are found in three different clusters at h_29 in the TP1 dataset  
+      - the cluster sizes are 20, 1, and 1, respectively  
+      - so the individual cluster size changes are 33, 52, 52, whereas the "total change" is 31  
+      - we plot both, but consider the "total change" going forward. 
+  
+```{r, fig.align='center', fig.width=10}
+change_types <- df_tracked %>% dplyr::select(Height_num, Cluster, Size_dif, Total_size_dif) %>% unique()
+change_types$Height_cluster <- paste(change_types$Height_num, change_types$Cluster, sep = "-")
+change_types %<>% dplyr::select(Height_num, Height_cluster, Size_dif, Total_size_dif) %>% unique() %>% 
+  set_colnames(c("Height_num", "Height_cluster", "Individual change", 
+                 "Total change\n (each new cluster \n- sum of original \ncluster sizes)")) %>% 
+  melt(., id.vars = c("Height_num", "Height_cluster")) %>% as_tibble() %>% 
+  set_colnames(c("ThreshOriginal", "ThreshOriginal_cluster", "Cluster size change", "Difference"))
+change_types$Difference[is.na(change_types$Difference)] <- 0
+
+ggplot(change_types, aes(x = ThreshOriginal, y = Difference, color = `Cluster size change`)) +
+  geom_point() + ggtitle("Comparing types of cluster change")
+```
+
+Comparing the "total change" means some of the minor changes due to clustering don't overwhelm the differences (e.g. clustered into three clusters at time point 1 and into one cluster at time point 2).  
+
+```{r}
+all_heights<- df_tracked %>% 
+  dplyr::select(Height_num, Height_char, Cluster, Total_size_dif) %>% 
+  unique() %>% dplyr::arrange(Height_num, Cluster)
+
+all_heights$Height_char <- factor(all_heights$Height_char, 
+                               levels = all_heights$Height_char[order(all_heights$Height_num)] %>% unique())
+
+q <- ggplot(all_heights, aes(x = Height_char, y = Total_size_dif)) + geom_boxplot()
+q_data <- ggplot_build(q) %>% extract2("data")
+q_points <- tibble(Height_num = all_heights$Height_num %>% unique(), 
+                   Height_char = all_heights$Height_char %>% unique(), 
+                   median = q_data[[1]]$middle, 
+                   q3 = q_data[[1]]$upper) %>% 
+  melt(., id.vars = c("Height_num", "Height_char")) %>% as_tibble()
+```
+
+We're more interested in the earlier heights:  
+
+## Cluster size differences - comparing time points {.tabset}
+
+### 1-100  
+
+```{r, fig.align='center', fig.width=10}
+snapshot1 <- all_heights %>% filter(Height_num <= 100)
+p_points <- q_points %>% filter(Height_num <= 100)
+ggplot(snapshot1, aes(x = Height_char, y = Total_size_dif)) + 
+  geom_boxplot() + 
+  geom_point(data = p_points, aes(x = Height_char, y = value, color = variable, alpha = 0.7)) + 
+  scale_x_discrete(guide = guide_axis(check.overlap = TRUE)) + 
+  scale_color_manual(name = "Point color", values = c("median"="red","q3"="blue"),
+                       labels = c("Median", "Quantile 3")) + 
+  xlab(paste0("Heights <= 100")) + ylab("Total cluster size change (TP2 - TP1)") + 
+  ggtitle("A snapshot of cluster size change at the first heights where novel genomes are absorbed")
+```
+
+### 100-200
+
+```{r, fig.align='center', fig.width=10}
+snapshot1 <- all_heights %>% filter((Height_num > 100) & (Height_num <= 200))
+p_points <- q_points %>% filter((Height_num > 100) & (Height_num <= 200))
+ggplot(snapshot1, aes(x = Height_char, y = Total_size_dif)) + 
+  geom_boxplot() + 
+  geom_point(data = p_points, aes(x = Height_char, y = value, color = variable, alpha = 0.7)) + 
+  scale_x_discrete(guide = guide_axis(check.overlap = TRUE)) + 
+  scale_color_manual(name = "Point color", values = c("median"="red","q3"="blue"),
+                       labels = c("Median", "Quantile 3")) + 
+  xlab(paste0("Heights in (100,200]")) + ylab("Total cluster size change (TP2 - TP1)") + 
+  ggtitle("A snapshot of cluster size change at the first heights where novel genomes are absorbed")
+```
+
+### 200-
+
+```{r, fig.align='center', fig.width=10}
+snapshot1 <- all_heights %>% filter((Height_num > 200))
+p_points <- q_points %>% filter(Height_num > 200)
+ggplot(snapshot1, aes(x = Height_char, y = Total_size_dif)) + 
+  geom_boxplot() + 
+  geom_point(data = p_points, aes(x = Height_char, y = value, color = variable, alpha = 0.7)) + 
+  scale_x_discrete(guide = guide_axis(check.overlap = TRUE)) + 
+  scale_color_manual(name = "Point color", values = c("median"="red","q3"="blue"),
+                       labels = c("Median", "Quantile 3")) + 
+  xlab(paste0("Heights > 200")) + ylab("Total cluster size change (TP2 - TP1)") + 
+  ggtitle("A snapshot of cluster size change at the first heights where novel genomes are absorbed")
+```
+
+### All heights
+```{r, fig.align='center', fig.width=10}
+ggplot(all_heights, aes(x = Height_char, y = Total_size_dif)) + 
+  geom_boxplot() + 
+  geom_point(data = q_points, aes(x = Height_char, y = value, color = variable, alpha = 0.7)) + 
+  scale_x_discrete(guide = guide_axis(check.overlap = TRUE)) + 
+  scale_color_manual(name = "Point color", values = c("median"="red","q3"="blue"),
+                       labels = c("Quantile 3", "Median")) + 
+  xlab(paste0("Heights")) + ylab("Total cluster size change (TP2 - TP1)") + 
+  ggtitle("Cluster size change at all heights where novel genomes are absorbed")
+```
+
+## Cluster sizes across heights (not differences) - comparing timepoints {.tabset}
+
+```{r, fig.align='center', fig.width=10}
+# df_h <- tibble(h = lapply(h_values, function(h) substr(h, 3, nchar(h))) %>% unlist() %>% as.numeric(), 
+#                heights = h_values, t1 = NA, t2 = NA, both = NA)
+# df_h$t1[which(df_h$heights %in% colnames(timepoint1))] <- 1
+# df_h$t2[which(df_h$heights %in% colnames(timepoint2))] <- 2
+# df_h$both <- df_h$t1 + df_h$t2
+# df_h <- df_h[!is.na(df_h$both),] %>% dplyr::arrange(h) %>% filter(h <= 100)
+# 
+# t1 <- sizes_for_tpX %>% dplyr::select(cluster, df_h$heights) %>% 
+#   melt(., id.vars = "cluster") %>% as_tibble() %>% 
+#   add_column(dataset = "timepoint1", .after = "cluster")
+# 
+# t2 <- sizes_for_tpY %>% dplyr::select(cluster, df_h$heights) %>% 
+#   melt(., id.vars = "cluster") %>% as_tibble() %>% 
+#   add_column(dataset = "timepoint2", .after = "cluster")
+# 
+# both <- bind_rows(t1, t2)
+# both$dataset <- factor(both$dataset, labels = c("timepoint1", "timepoint2"))
+# 
+# ggplot(both, aes(x = variable, y = value, fill = dataset)) + 
+#   geom_boxplot() + xlab("Heights") + ylab("Cluster sizes")
+```
+
+```{r}
+cluster_difs <- df_tracked %>% dplyr::select(Height_num, Height_char, Cluster, Cluster_size, 
+                                             Number_original_clusters, Original_cluster, 
+                                             Original_cluster_size, Total_original_cluster_size, 
+                                             Size_dif, Total_size_dif) %>% unique()
+
+a <- cluster_difs %>% dplyr::select(Height_num, Height_char, Cluster, Cluster_size) %>% 
+  unique() %>% dplyr::arrange(Height_num, Cluster) %>% 
+  add_column(dataset = "timepoint1", .before = "Height_num")
+
+b <- cluster_difs %>% dplyr::select(Height_num, Height_char, Original_cluster, # Original_cluster_size, 
+                                    Total_original_cluster_size) %>% 
+  unique() %>% dplyr::arrange(Height_num, Original_cluster) %>% 
+  add_column(dataset = "timepoint2", .before = "Height_num") %>% 
+  set_colnames(colnames(a))
+
+b$Cluster %<>% as.double()
+b$Cluster_size %<>% as.integer()
+
+new_set <- bind_rows(a,b) %>% dplyr::arrange(Height_num, dataset, Cluster)
+x <- new_set$Height_char
+new_set$Height_char <- factor(x, levels = x[order(new_set$Height_num)] %>% unique())
+```
+
+### 1-100  
+
+```{r, fig.align='center', fig.width=10}
+part1 <- new_set %>% filter(Height_num <= 100)
+ggplot(part1, aes(x = Height_char, y = Cluster_size, fill = dataset)) + 
+  geom_boxplot() + xlab("Heights <= 100") + ylab("Cluster sizes") + 
+  scale_x_discrete(guide = guide_axis(check.overlap = TRUE))
+```
+
+```{r, fig.align='center', fig.width=10, include=FALSE}
+# s <- ggplot(part1, aes(x = Height_char, y = Cluster_size, fill = dataset)) + 
+#   geom_boxplot() + xlab("Heights <= 100") + ylab("Cluster sizes") + 
+#   scale_x_discrete(guide = guide_axis(check.overlap = TRUE))
+# s_data <- ggplot_build(s) %>% extract2("data") %>% 
+#   extract2(1) %>% as_tibble() %>% 
+#   bind_cols(Height_num = part1$Height_num %>% unique() %>% rep(2) %>% sort(), 
+#             Height_char = part1$Height_char %>% unique() %>% rep(2) %>% sort(), .)
+# s_data$Height_char %<>% as.character()
+# 
+# ggplot() + 
+#   geom_boxplot(data = part1, aes(x = Height_char, y = Cluster_size, fill = dataset), alpha = 0.5) +
+#   xlab("Heights <= 100") + ylab("Cluster sizes") +
+#   scale_x_discrete(guide = guide_axis(check.overlap = TRUE)) +
+#   geom_point(data = s_data, aes(x = Height_char, y = middle))
+#   # geom_smooth(data = s_data, aes(x = Height_char, y = middle))
+# 
+# # m <- ggplot(s_data, aes(x = Height_num, y = middle)) + 
+# #   geom_point() + geom_smooth()
+```
+
+### 100-200
+
+```{r, fig.align='center', fig.width=10}
+part2 <- new_set %>% filter((Height_num > 100) & (Height_num <= 200))
+ggplot(part2, aes(x = Height_char, y = Cluster_size, fill = dataset)) + 
+  geom_boxplot() + xlab("Heights in (100,200]") + ylab("Cluster sizes") + 
+  scale_x_discrete(guide = guide_axis(check.overlap = TRUE))
+```
+
+### 200-
+
+```{r, fig.align='center', fig.width=10}
+part3 <- new_set %>% filter(Height_num > 200)
+ggplot(part3, aes(x = Height_char, y = Cluster_size, fill = dataset)) + 
+  geom_boxplot() + xlab("Heights > 200") + ylab("Cluster sizes") + 
+  scale_x_discrete(guide = guide_axis(check.overlap = TRUE))
+```
+
+### All heights
+
+```{r, fig.align='center', fig.width=10}
+ggplot(new_set, aes(x = Height_char, y = Cluster_size, fill = dataset)) + 
+  geom_boxplot() + xlab("All heights") + ylab("Cluster sizes") + 
+  scale_x_discrete(guide = guide_axis(check.overlap = TRUE))
+```
+
+## Changes in cluster size when genomes are added (at notable heights <= 150). I.e. **Results!**
+
+```{r}
+notable_change <- all_heights %>% filter(Height_num <= 150) %>% 
+  dplyr::arrange(-Total_size_dif) %>% 
+  dplyr::select(Height_char, Cluster, Total_size_dif) %>% 
+  set_colnames(c("Threshold", "Cluster", "Size change"))
+
+# brks <- c(0,10,20,30,40,50)#quantile(notable_change$`Size change`)
+# clrs <- round(seq(255, 40, length.out = length(brks) + 1), 0) %>%
+#   {paste0("rgb(", .,",", 105, ",255)")}
+notable_change %>% 
+  DT::datatable(., fillContainer = TRUE, filter = "top", rownames = TRUE,
+                options = list(pageLength = nrow(notable_change), dom = "ti", scrollY = "500px", 
+                               columnDefs = list(list(className = "dt-center", targets = 0:3))))
+  # formatStyle("Size change", target = 'row', backgroundColor = styleInterval(brks, clrs))
+```
+
+## Identifying the distribution of the cluster size changes
+
+```{r}
+a <- part1 %>% filter(dataset == "timepoint1")
+b <- part1 %>% filter(dataset == "timepoint2")
+x <- a %>% pull(Cluster_size)
+# hist(x)
+descdist(x)
+```
+
+## General method for datasets: a more manual approach for “traditional” distributions {.tabset}
+
+### Normal
+```{r}
+fit_norm <- fitdist(x, "norm", method = "mge")
+plot(fit_norm)
+```
+
+### Weibull
+```{r}
+fit_weibull <- fitdist(x,  distr = "weibull", method = "mge")
+plot(fit_weibull)
+```
+
+### Exponential
+```{r}
+fit_exp <- fitdist(x, "exp", method = "mge")
+plot(fit_exp)
+```
+
+### Gamma
+```{r}
+fit_gamma <- fitdist(x, "gamma", method = "mge")
+plot(fit_gamma)
+```
+
+### Lognormal
+```{r}
+fit_lnorm <- fitdist(x, "lnorm", method = "mge")
+plot(fit_lnorm)
+```
+
+### Uniform
+```{r}
+fit_unif <- fitdist(x, "unif", method = "mge")
+plot(fit_unif)
+```
+
+```{r}
+fitted_models <- list(fit_norm, fit_weibull, fit_exp, 
+                      fit_gamma, fit_lnorm, fit_unif) %>% 
+  set_names(c("Normal", "Weibull", "Exponential",
+              "Gamma", "Lognormal", "Uniform"))
+
+aics <- c(fit_norm$aic, fit_weibull$aic, fit_exp$aic, 
+          fit_gamma$aic, fit_lnorm$aic, fit_unif$aic) %>% 
+  set_names(c("Normal", "Weibull", "Exponential",
+              "Gamma", "Lognormal", "Uniform"))
+
+best_fit_name <- which.min(aics) %>% names()
+as.data.frame(aics) %>% rownames_to_column() %>% as_tibble() %>% 
+  set_colnames(c("Distribution", "AIC")) %>% kable()
+```
+
+The `r tolower(best_fit_name)` has the lowest AIC, so that distribution might be an adequate fit. Now we try a goodness of fit test to verify.  
+
+```{r}
+gofTest(x, test = "cvm", distribution = "lnorm")
+```
+
+
+
+

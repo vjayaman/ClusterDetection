@@ -39,13 +39,13 @@ isolateClusterSize <- function(clusters, sizes) {
 
 # returns tibble of clusters and their associated sizes at each height
 clusterSizes <- function(clusters) {
-  # note, first column of "clusters" is the column of isolate names
-  sizes <- lapply(2:ncol(clusters), function(j) {
-    if (j %% 200 == 0) {
-      j %>% paste0(., "/", ncol(clusters)-1) %>% print()
+  # note, first column of "clusters" is the column of genome labels
+  sizes <- lapply(2:ncol(clusters), function(h) {
+    if (h %% 200 == 0) {
+      h %>% paste0(., "/", ncol(clusters)-1) %>% print()
     }
-    clusters %>% pull(j) %>% table() %>% 
-      as.data.frame() %>% set_colnames(c("cluster", colnames(clusters)[j])) %>% 
+    clusters %>% pull(h) %>% table() %>% 
+      as.data.frame() %>% set_colnames(c("cluster", colnames(clusters)[h])) %>% 
       as_tibble()
   }) %>% reduce(full_join, by = "cluster")
   
@@ -89,6 +89,47 @@ boxplotSubset <- function(df, title_sec) {
     ggtitle(paste0("Change in cluster across thresholds", title_sec)) %>% return()
 }
 
+# clusterMatching <- function(df1, df2, dfx, cluster_x) {
+#   cluster_x_isolates <- df1 %>% 
+#     filter(TP1 == cluster_x) %>% pull(Isolates)
+#   a <- dfx[dfx$Clusters==cluster_x,] %>% 
+#     set_colnames(c("TP1","TP1-size"))
+#   dfy <- df2 %>% filter(Isolates %in% cluster_x_isolates) %>% 
+#     pull(TP2) %>% table() %>% as.data.frame() %>% 
+#     as_tibble() %>% set_colnames(c("TP2","TP2-size"))
+#   
+#   x <- bind_cols(a, dfy) %>% as_tibble()
+#   x %<>% bind_cols(., Change_in_size = x$`TP2-size` - x$`TP1-size`) %>% 
+#     return()
+# }
+# 
+# all_heights <- intersect(colnames(timepoint1), colnames(timepoint2))[-1]
+# # note, some heights that don't match, when comparing
+# # time points 1 and 2
+# for (h in all_heights) {
+#   print(h)
+#   df1 <- timepoint1 %>% dplyr::select(isolate, all_of(h)) %>% 
+#     set_colnames(c("Isolates", "TP1"))  
+#   df2 <- timepoint2 %>% dplyr::select(isolate, all_of(h)) %>% 
+#     set_colnames(c("Isolates", "TP2"))
+#   
+#   dfx <- df1$TP1 %>% table() %>% as.data.frame() %>% 
+#     set_colnames(c("Clusters","Freq")) %>% as_tibble()
+#   dfx$Clusters %<>% as.character() %>% as.numeric()
+#   
+#   b <- lapply(1:nrow(dfx), function(i) {
+#     clusterMatching(df1, df2, dfx, dfx$Clusters[i])
+#   }) %>% bind_rows() %>% 
+#     bind_cols(Height = h, .)
+#   
+#   if (h == "h_0") {
+#     full_dataset <- b
+#   }else {
+#     full_dataset <- bind_rows(full_dataset, b)  
+#   }
+# }
+# 
+# saveRDS(full_dataset, "cluster_matching.Rds")
 
 
 
