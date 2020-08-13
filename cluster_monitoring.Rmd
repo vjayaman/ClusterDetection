@@ -269,6 +269,58 @@ df_tracked %>%
 
 ```
 
+## Corresponding cluster tracking {.tabset}
+### Step 1
+```{r}
+exceptions <- df_tracked %>% dplyr::filter(Number_original_clusters > 1)
+```
+
+```{r}
+novels <- novel_absorbed %>% 
+  dplyr::select(New_genome_at_T2, Height_char, Cluster, Cluster_size)
+
+results <- lapply(1:nrow(novels), function(i) {
+  row_x <- novels[i,]
+
+  # isolates in cluster 266 at h_22 in second time point
+  h <- row_x$Height_char
+  cl <- row_x$Cluster
+  t2_isolates <- timepoint2 %>% dplyr::select(isolate, all_of(h)) %>% 
+    set_colnames(c("isolate","height")) %>% filter(height == cl)
+  
+  # number of isolates in cluster 266 at h_22 at second time point
+  new_isolates <- t2_isolates %>% pull(isolate) %>% unique() %>% length()
+
+  # isolates at time point 1 that can be found in cluster 266 at h_22 at second time point
+  t1_orig <- timepoint1 %>% filter(isolate %in% t2_isolates$isolate)
+  
+  # number of clusters these isolates can be found in at each height
+  x <- lapply(colnames(t1_orig)[-1], function(h) {
+    t1_orig %>% pull(all_of(h)) %>% table() %>% 
+      as.data.frame() %>% set_colnames(c("T1_cl", "T1_cl_size")) %>% 
+      as_tibble() %>% add_column("T1_h" = h, ., .before = 1)
+  })
+  
+  num_cl <- lapply(1:length(x), function(j) x[[j]] %>% nrow()) %>% unlist()
+
+  # find nearest height where the clusters merge
+  k <- match(1, num_cl)
+  new_cols <- x[[k]]
+  
+  # full result row
+  row_x %>% 
+    set_colnames(c("Novel_genome","T2_h","T2_cl","T2_cl_size")) %>% 
+    bind_cols(new_cols) %>% return()
+}) %>% bind_rows()
+```
+
+```{r}
+new_absorbed <- novels %>% group_by(Height_char, Cluster) %>% summarise(Count = n())
+
+results1 <- results %>% left_join(new_absorbed, by = c("T2_h"="Height_char", "T2_cl" = "Cluster"))
+results1$difference <- results1$T2_cl_size - results1$T1_cl_size
+```
+
 Exception to the general scenario:  
   * Cluster x at TP2 contains isolates found in clusters t, u, v at TP1. Then each cluster size difference doesn't illustrate this, and the "total cluster size change" does  
   

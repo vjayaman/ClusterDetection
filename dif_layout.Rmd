@@ -1,0 +1,639 @@
+---
+title: "Cluster Detection"
+output: 
+  flexdashboard::flex_dashboard:
+    storyboard: true
+    theme: "yeti"
+    css: style.css
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+source("global.R")
+```
+
+### Cluster Tracking Module **(1/13)**
+
+!["Figure 1"](image.png)
+```{r}
+
+```
+
+***
+
+In this cluster detection module, we take as input two datasets: height and cluster data for two timepoints, where novel genomes have been introduced in TP2. 
+
+Given the two datasets, we would like to identify which clusters at time point 1 (TP1), grow (significantly or otherwise) by time point 2 (TP2). That is, if novel genomes are introduced into the TP1 dataset, which clusters in particular absorb these novel genomes and are there any clusters that grow by some notable amount, to be determined. 
+
+This module explores this question, and also suggests a machine learning model and parameter values for future prediction with similar datasets.
+  
+**(1/13)**
+
+### This frame displays all of the genomes in the provided datasets and their presence at each time point **(2/13)**
+
+```{r}
+campy_data <- c("MergedFinal_332calls_4203genomes_clusters.tsv", 
+                "MergedFinal_332calls_5075genomes_clusters.tsv")
+
+X <- 1
+Y <- 2
+
+timepoint1 <- read.csv(file = campy_data[1], numerals = "no.loss",
+                       stringsAsFactors = FALSE, sep = "\t") %>% as_tibble()
+colnames(timepoint1) %<>% gsub(pattern = "genome", replacement = "isolate", x = .) %>%
+  gsub(pattern = "X", replacement = "h_", x = .)
+
+timepoint2 <- read.csv(file = campy_data[2], numerals = "no.loss", 
+                       stringsAsFactors = FALSE, sep = "\t") %>% as_tibble()
+colnames(timepoint2) %<>% gsub(pattern = "genome", replacement = "isolate", x = .) %>% 
+  gsub(pattern = "X", replacement = "h_", x = .)
+```
+
+```{r, results='hide'}
+# timepoint X
+sizes_for_tpX <- clusterSizes(timepoint1)
+tpX <- isolateClusterSize(timepoint1, sizes_for_tpX) %>%
+  set_colnames(c("isolate", "heights", "tpX_clusters", "tpX_sizes"))
+
+# timepoint Y
+sizes_for_tpY <- clusterSizes(timepoint2)
+tpY <- isolateClusterSize(timepoint2, sizes_for_tpY) %>%
+  set_colnames(c("isolate", "heights", "tpY_clusters", "tpY_sizes"))
+```
+
+```{r}
+# setting up dataframe
+d <- c(timepoint1$isolate, timepoint2$isolate) %>% unique() %>%
+  tibble(Isolates = ., TPX = FALSE, TPY = FALSE, Both = FALSE)
+
+# identifying isolates in one or both
+d$TPY[which(d$Isolates %in% timepoint2$isolate)] <- TRUE
+d$TPX[which(d$Isolates %in% timepoint1$isolate)] <- TRUE
+d$Both[which(d$TPX & d$TPY)] <- TRUE
+
+# preparing dataset for display
+d <- d[order(d$Isolates),]
+vals <- c(TRUE, FALSE)
+saveRDS(d, "d.Rds")
+```
+
+```{r}
+# table with colorful cells indicating where isolates are found
+d %>% set_colnames(c("Isolates", paste0("Found in TP", X),
+                     paste0("Found in TP", Y), "Found in both datasets")) %>%
+  DT::datatable(., fillContainer = TRUE, filter = "top", rownames = TRUE,
+                options = list(pageLength = nrow(d), dom = "ti", scrollY = "500px")) %>%
+  formatStyle(2, backgroundColor = styleEqual(vals, c("lightsteelblue", "gray"))) %>%
+  formatStyle(3, backgroundColor = styleEqual(vals, c("lightgreen", "gray"))) %>%
+  formatStyle(4, backgroundColor = styleEqual(vals, c("lightsteelblue", "gray")))
+```
+
+*** 
+
+Some isolates were found in only one of the two time point datasets, so the table is to help keep track of these. In the Campylobacter datasets used, such isolates are introduced at TP2, so cluster tracking is possible.  
+
+**(2/13)**
+
+### Filtered to show only novel genomes **(3/13)**
+
+```{r}
+d[which(d$TPX == FALSE),] %>% 
+  set_colnames(c("Isolates", paste0("Found in TP", X),
+                     paste0("Found in TP", Y), "Found in both datasets")) %>%
+  DT::datatable(., fillContainer = TRUE, filter = "top", rownames = TRUE,
+                options = list(pageLength = nrow(d), dom = "ti", scrollY = "500px")) %>%
+  formatStyle(2, backgroundColor = styleEqual(vals, c("lightsteelblue", "gray"))) %>%
+  formatStyle(3, backgroundColor = styleEqual(vals, c("lightgreen", "gray"))) %>%
+  formatStyle(4, backgroundColor = styleEqual(vals, c("lightsteelblue", "gray")))
+```
+
+*** 
+
+This table contains the same information as in the prior frame, filtered to only show novel genomes added to the dataset at TP2.  
+
+**(3/13)**
+
+### Candidate clusters **(4/13)** 
+
+```{r}
+# isolates at TP2 and not TP1
+isolates_t2 <- d$Isolates[d$TPY & !d$TPX]
+# isolates at TP1
+isolates_t1 <- d$Isolates[d$TPX]
+
+clusters <- timepoint2 %>% filter(isolate %in% isolates_t2)
+```
+
+```{r}
+candidate_clusters <- colnames(timepoint2)[-1] %>% 
+  lapply(., function(h_x) {
+    h <- as.name(h_x)
+  
+    # at height h, the clusters that contain novel genomes
+    h_cl <- pull(clusters, h) %>% unique()
+    dfx <- timepoint2 %>% dplyr::select(isolate, all_of(h)) %>% 
+      filter(!!h %in% h_cl)
+    dfx$novel <- "original"
+    dfx$novel[dfx$isolate %in% isolates_t2] <- "novel"
+  
+    # sizes of these clusters
+    a <- dfx %>% group_by(!!h) %>% tally() %>% set_colnames(c("clusters","cl_size"))
+  
+    # number of novel genomes and original genomes in each cluster
+    b <- dfx %>% group_by(!!h, novel) %>% tally()
+    
+    # clusters with novel and original genomes
+    multistrain_cl <- b %>% filter(novel == "original") %>% pull(h)
+    b %<>% filter(!!h %in% multistrain_cl) %>% set_colnames(c("clusters", "type", "count"))
+    
+    left_join(b, a, by = "clusters") %>% 
+      bind_cols(height = as.character(h), .) %>% return()
+}) %>% bind_rows()
+```
+
+```{r}
+# we run this over all novel genomes
+notable_clusters <- isolates_t2 %>% 
+  lapply(., function(isolate_x) {
+    isolate_x_df <- timepoint2 %>% filter(isolate == isolate_x) %>% 
+      dplyr::select(-isolate) %>% t() %>% as.data.frame() %>% 
+      rownames_to_column() %>% as_tibble() %>% 
+      set_colnames(c("height","clusters"))
+    
+    absorbing_cluster <- left_join(isolate_x_df, candidate_clusters, 
+                                   by = c("height", "clusters")) %>% 
+      bind_cols(isolate = isolate_x)
+  
+    # the first cluster-height pair for isolate_x that includes non-novel genomes
+    absorbing_cluster[complete.cases(absorbing_cluster),][1:2,] %>% return()
+}) %>% bind_rows()
+
+h_num <- notable_clusters$height %>% gsub("h_", "", .) %>% as.numeric()
+notable_clusters %<>% add_column(., h_num, .before = 1)
+
+# note that for the notable_clusters dataset, some height-cluster pairs will be repeated, 
+# as they absorb multiple novel genomes at the same time
+# also, the number of rows should be double that of the number of novel genomes (a novel and
+# original row for each)
+
+# | h_num | height | clusters | type | count | cl_size | isolate |
+# | novel isolate | T2_h | T2_cl | T2_cl_size |
+novel_absorption <- notable_clusters %>% filter(type == "novel") %>% 
+  dplyr::select(-type, -count) %>% unique() %>% 
+  dplyr::arrange(h_num, clusters) %>% 
+  dplyr::select(isolate, height, clusters, cl_size) %>% 
+  set_colnames(c("isolate", "T2_h", "T2_cl", "T2_cl_size"))
+novel_absorption$id <- paste(novel_absorption$T2_h, novel_absorption$T2_cl, sep = "-")
+```
+
+!["This is the caption"](cand_img5.png)
+
+***
+
+We want to find the first threshold at which a new genome is absorbed into an existing multistrain cluster.  
+
+Steps:  
+
+1. isolate_k is the k-th isolate of those that are introduced at TP2  
+
+2. we filtered the T2 dataset to only contain isolate_k and all height-cluster pairs where isolate_k is not in a singleton  
+  + we call this filtered dataset the "candidate set"  
+  
+3. then for each height-cluster pair in the candidate set, we find all the isolates found in the selected cluster at the selected height (T1 and T2 inclusive)  
+  - if any of these isolates were present in the T1 set, then we have that isolate_k was absorbed into an existing cluster  
+  - if none were, then we have a cluster of novel genomes, and so we move onto the next height-cluster pair in the candidate set
+
+Result: We have the clusters that first absorbed novel genomes (and contain one or more original genomes). We then make a new dataset of these key clusters as well as counts of novel and original genomes in each, and the total cluster sizes, all of this at T2.  
+
+**(4/13)**
+
+### Novel genome absorption **(5/13)** 
+
+
+```{r}
+novel_absorption %>% 
+  set_colnames(c("Novel genome", "T2 height", "T2 cluster", "T2 cluster size", "Height-cluster")) %>% 
+  DT::datatable(., fillContainer = TRUE, filter = "top", rownames = FALSE,
+                options = list(pageLength = nrow(novel_absorption), dom = "ti", scrollY = "500px",
+                               columnDefs = list(list(className = "dt-center", targets = 0:4))))
+```
+
+*** 
+
+Result: We have the clusters that first absorbed novel genomes (and contain one or more original genomes).  
+
+We then make a new dataset of these key clusters as well as counts of novel and original genomes in each, and the total cluster sizes, all of this at T2. 
+
+This is a table with cluster assignments at T2 for the novel genomes, that we feed into a pipeline to track the assignments at T1 of the original genomes.
+
+**(5/13)**
+
+### Size change for clusters when matching by height directly **(6/13)**
+
+```{r}
+key_clusters_T2 <- novel_absorption %>% 
+  dplyr::select(-isolate) %>% unique() %>% 
+  dplyr::select(id, T2_h, T2_cl, T2_cl_size)
+
+T2_key_assign <- (1:nrow(key_clusters_T2)) %>% 
+  lapply(., function(i) {
+    row_x <- key_clusters_T2[i,]
+    timepoint2 %>% filter(!!as.name(row_x$T2_h) == row_x$T2_cl) %>% 
+      dplyr::select(isolate, row_x$T2_h) %>% return()
+}) %>% set_names(key_clusters_T2$id)
+
+key_clusters_T1 <- (1:length(T2_key_assign)) %>% 
+  lapply(., function(i) {
+    # timepoint 2 isolates in key_cluster i
+    iso_in_t2 <- T2_key_assign[[i]] %>% pull(isolate)    # timepoint 2 isolates
+    dfx <- timepoint1 %>% filter(isolate %in% iso_in_t2) # T1 cluster assignments
+    
+    # first T1 height at which all T2 isolates of key cluster are in one T1 cluster
+    T1_h <- dfx %>% melt(id = "isolate") %>% as_tibble() %>% 
+      group_by(variable, value) %>% tally() %>% 
+      filter(n == nrow(dfx)) %>% `[[`(1,1) %>% as.character()
+    
+    id <- T2_key_assign[i] %>% names() %>% as.character()
+    T1_cl <- dfx %>% pull(T1_h) %>% unique()
+    
+    T1_cl_actual_size <- timepoint1 %>% filter(!!as.name(T1_h) == T1_cl) %>% nrow()
+    T1_cl_wo_novel_size <- dfx %>% pull(T1_h) %>% length()
+    
+    tibble(id, T1_h, T1_cl, T1_cl_wo_novel_size, T1_cl_actual_size) %>% return()
+}) %>% bind_rows()
+
+key_clusters <- full_join(key_clusters_T2, key_clusters_T1, by = "id")
+
+key_clusters$m1 <- key_clusters$T2_cl_size - key_clusters$T1_cl_actual_size
+key_clusters$m2 <- key_clusters$T2_cl_size - key_clusters$T1_cl_wo_novel_size
+
+key_clusters$T1_cl %<>% as.character()
+key_clusters$T2_cl %<>% as.character()
+
+key_clusters$h1 <- key_clusters$T1_h %>% gsub("h_", "", .) %>% as.integer()
+key_clusters$h2 <- key_clusters$T2_h %>% gsub("h_", "", .) %>% as.integer()
+
+key_clusters %<>% dplyr::select(c("id", "h1", "T1_h", "T1_cl", "T1_cl_wo_novel_size", 
+                                  "T1_cl_actual_size", "h2", "T2_h", "T2_cl", 
+                                  "T2_cl_size", "m1", "m2"))
+```
+
+```{r}
+ggplot(key_clusters, aes(x = h2, y = m1)) + geom_point() + 
+  xlab("Height-cluster pairs") + ylab("Change in cluster size") + 
+  ggtitle("Size change for matching (actual) clusters across time points", 
+          subtitle = "(In some cases: isolates are found in larger clusters at TP1 than at TP2, so negative change)")
+```
+
+*** 
+
+This is an illustration of the second attempted process of cluster tracking across time points. At each TP1 and TP2, the genomes were clustered. The addition of a single genome can affect clustering, so the changes here do not necessarily reflect the addition of novel genomes, and may just show changes inherent in clustering two datasets. 
+
+In this method, I first identified the genomes in a cluster at T2 that just absorbed novel genomes. The size of this cluster I considered the "T2 cluster size". Then I tracked the original genomes in the T1 dataset, to find the first cluster at which they were found together. The size of this cluster was considered the "T1 cluster size". 
+
+In general, we can regard these T1 clusters as being the foundation of the notable T2 clusters, but in some cases they are not reasonable precursors. For example, h_2-411 (h_2 and cluster 411 at T2) has size 4, but the original genomes in this cluster were clustered differently at T1 (without the novels). 
+
+The result is that at T1, these genomes were first grouped together in a cluster of size 13, and so the cluster seems to shrink by 9. It's not the clustering method we wanted to test, but the introduction of novel genomes and conceptual size changes of clusters, so we moved on to use the method in the next frame. 
+
+**(6/13)**
+
+### Size change for matching conceptual clusters, by isolates, not height-cluster pairs **(7/13)**
+
+```{r}
+ggplot(key_clusters, aes(x = h2, y = m2)) + geom_point() + 
+  xlab("Expanding clusters") + ylab("Change in cluster size") + 
+  ggtitle("Size change for matching conceptual clusters across time points", 
+          subtitle = "(This method simply looks at the number of novel genomes added at T2)")
+```
+
+*** 
+
+In this method, we simply consider the size of a cluster at T2 with the novel genomes removed as it's presumed size at T1. As such, the focus is on the TP2 dataset, and minor clustering discrepancies do not overwhelm the results, as in the previous method. 
+
+Note that there are `r nrow(key_clusters)` clusters that first absorb the `r nrow(novel_absorption)` novel genomes, these are the clusters we will work with from now on.  
+
+**(7/13)**
+
+### Parameter sweep of proportional cluster growth **(8/13)**
+
+```{r}
+dfx <- key_clusters %>% dplyr::select(id, h1, T1_h, T1_cl_wo_novel_size, 
+                                      h2, T2_h, T2_cl, T2_cl_size, m2)
+# prop is new cluster size over old cluster size
+n <- nrow(dfx)
+b <- dfx$T2_cl_size[1:n]
+a <- dfx$T1_cl_wo_novel_size[1:n]
+dfx$growth <- (b - a)/a
+
+growth_thresholds <- seq(0.01, 1, 0.01)
+names(growth_thresholds) <- growth_thresholds %>% `*`(100) %>% paste("g", ., sep = "")
+
+param_sweep <- matrix("B", nrow = n, ncol = length(growth_thresholds) + 1) %>% 
+  set_colnames(c("id", names(growth_thresholds))) %>% as_tibble()
+param_sweep[,1] <- dfx$id
+
+for (i in 1:length(growth_thresholds)) {
+  g <- growth_thresholds[i]
+  ids <- which(dfx$growth >= g[[1]])
+  param_sweep[ids, names(g)] <- "A"
+}
+
+param_sweep %<>% left_join(dfx, ., by = "id")
+param_sweep %<>% dplyr::select(id, h2, m2, names(growth_thresholds))
+
+df <- param_sweep %>% melt(id = c("id", "h2", "m2")) %>% 
+  set_colnames(c("id", "h2", "m2", "gTh", "c_lbl")) %>% 
+  as_tibble()
+
+df_counts <- df
+df_counts$c_lbl %<>% as.factor()
+df_counts %<>% group_by(gTh) %>% count(c_lbl, .drop = FALSE)
+
+df_percs <- growth_thresholds %>% as.data.frame() %>% rownames_to_column() %>% 
+  as_tibble() %>% set_colnames(c("gTh", "perc")) %>% 
+  left_join(df_counts, ., by = "gTh")
+```
+
+```{r}
+ggplot(df_percs, aes(x = perc, y = n, color = c_lbl)) + geom_point() + 
+  theme(legend.position = "bottom") + 
+  scale_color_manual(values = c("red", "black"), 
+                     labels = c("Grows by >= x", "Grows by < x"), 
+                     name = "Height-cluster growth") + 
+  scale_x_continuous(labels = scales::percent) + 
+  labs(title = "Key clusters and their growth rates", 
+       x = "Percent growth", y = "Number of clusters")
+```
+
+*** 
+
+In this plot, we look at the number of clusters that grow by >= proportion x. 
+
+We use this plot to identify natural breakpoints, as we want both a sizeable number of notable clusters as well as a large enough proportional growth to be of interest. 
+
+For example, consider 25% growth. At this level, `r df_percs %>% filter(perc == 0.25) %>% filter(c_lbl == "A") %>% pull(n) %>% paste0(., "/", nrow(key_clusters))` clusters grow by 25% or more from T1 to T2, and `r df_percs %>% filter(perc == 0.25) %>% filter(c_lbl == "B") %>% pull(n) %>% paste0(., "/", nrow(key_clusters))` grow by less than 25%.  
+
+**(8/13)**
+
+### Parameter change animation - cluster by cluster basis **(9/13)**
+
+```{r}
+gbox <- data.frame(x = c(-5, -5, 155, -5),
+                   y = c(-10, 65, -10, -10),
+                   xend = c(-5, 155, 155, 155),
+                   yend = c(65, 65, 65, -10))
+
+growthdf <- growth_thresholds %>% as.data.frame() %>% 
+  rownames_to_column() %>% as_tibble() %>% 
+  set_colnames(c("gTh", "perc"))
+
+df %<>% left_join(., growthdf, by = "gTh")
+df$perc %<>% scales::percent()
+
+p1 <- ggplot(df, aes(h2, m2, color = c_lbl)) + 
+  geom_point(alpha = 0.6) + 
+  scale_color_manual(name = "Cluster type", values = c("red", "black")) + 
+  xlab("Height-cluster pairs") + ylab("Change in cluster size") + 
+  geom_segment(aes(x=gbox$x[1], y=gbox$y[1],
+                   xend=gbox$xend[1], yend=gbox$yend[1]), colour = "black") +
+  geom_segment(aes(x=gbox$x[2], y=gbox$y[2],
+                   xend=gbox$xend[2], yend=gbox$yend[2]), colour = "black") +
+  geom_segment(aes(x=gbox$x[3], y=gbox$y[3],
+                   xend=gbox$xend[3], yend=gbox$yend[3]), colour = "black") +
+  geom_segment(aes(x=gbox$x[4], y=gbox$y[4],
+                   xend=gbox$xend[3], yend=gbox$yend[4]), colour = "black") + 
+  transition_states(perc, state_length = 20) +
+  labs(title = "Min threshold: {closest_state}")
+
+animate(p1)
+```
+
+*** 
+
+The previous plot showed percent growth by number of clusters. 
+
+This plot shows on a frame by frame basis, how many clusters grow by the indicated percent growth from T1 to T2. Cluster type "A" grow by the indicated percentage or more, and cluster type "B" has slower growth. 
+
+For example, when the plot is at frame "Min threshold: 45%", "A" clusters grow by 45% of their original size or more, and "B" clusters grow by less than 45% of the their original size, from T1 to T2.
+
+Note that all of these 400+ clusters are those that first absorb novel genomes.  
+
+**(9/13)**
+
+### Parameter change animation - close up of heights under 150 **(10/13)**
+
+```{r}
+df2 <- df %>% filter(h2 <= 150)
+p2 <- ggplot(df2, aes_string(x = "h2", y = "m2", color = "c_lbl")) + 
+  geom_point(alpha = 0.6) + 
+  scale_color_manual(name = "Cluster type", values = c("red", "black")) + 
+  xlab("Height-cluster pairs") + ylab("Change in cluster size") + 
+  ggtitle("Close up of first 100 heights") +
+  geom_segment(aes(x = -5, y = -10, xend = -5, yend = 65), colour = "black") +
+  geom_segment(aes(x = -5, y = 65, xend = 155, yend = 65), colour = "black") +
+  geom_segment(aes(x = 155, y = -10, xend = 155, yend = 65), colour = "black") +
+  geom_segment(aes(x = -5, y = -10, xend = 155, yend = -10), colour = "black") +
+  transition_states(perc, state_length = 20) +
+  labs(title = "Min threshold: {closest_state}")
+
+animate(p2)
+```
+
+*** 
+
+This frame is a close up of section of the previous plot, of heights 0-150, as there are many points in that region that seem to overlap when not looked at closely.  
+
+**(10/13)**
+
+### Labeled data - visual **(11/13)**
+
+```{r}
+key_clusters$prop <- (key_clusters$T2_cl_size - key_clusters$T1_cl_wo_novel_size) / key_clusters$T1_cl_wo_novel_size
+
+peaks <- findpeaks(key_clusters$m2) %>%
+  set_colnames(c("Height", "Index", "Begins_index",
+                 "Ends_index")) %>% as_tibble()
+
+key_clusters$Label <- "B"
+# # inds <- intersect(peaks$Index, which(key_clusters$prop >= mean(key_clusters$prop)))
+# # inds <- intersect(which(key_clusters$m2 >= 15), which(key_clusters$prop >= 0.34)))
+inds <- intersect(which(key_clusters$T1_cl_wo_novel_size >= 10), 
+                  which(key_clusters$prop >= 0.34))
+# inds <- which(key_clusters$prop >= 0.34)
+# # inds <- intersect(peaks$Index, which(key_clusters$m2 >= 10))
+# # inds <- which((key_clusters$prop >= median(key_clusters$prop)) & key_clusters$T1_cl_wo_novel_size > 5)
+key_clusters$Label[inds] <- "A"
+```
+
+```{r}
+key_clusters %>% 
+ggplot(., aes(x = h2, y = m2, color = Label)) + geom_point(alpha = 0.6) + 
+    xlab("Height-cluster pairs") + ylab("Change in cluster size") + 
+    scale_color_manual(name = "Cluster type", values = c("red", "black"), 
+                       labels = c("Grows by >= 34 % and has initial size >= 10", "Else")) + 
+    theme(legend.position = "bottom") + 
+    ggtitle("Expanding clusters, growing by 34% or more")
+```
+
+***
+
+Here we have the height-cluster points labeled by a metric decided upon using the earlier parameter sweep. These are the labels that will be input into the machine learning algorithm. 
+
+ - "A" clusters grow by >= 34% of their initial cluster size and have initial size >= 10 genomes, 
+ 
+ - "B" clusters grow by <= 34% of their cluster size at T1, have initial size < 10 genomes, or both.  
+ 
+**(11/13)**
+
+### Ranked cluster results **(12/13)**
+
+```{r}
+# all_heights<- key_clusters %>% 
+#   dplyr::select(h1, T1_h, T1_cl, T1_cl_wo_novel_size, m2) %>%
+#   unique() %>% dplyr::arrange(h1, T1_cl)
+# 
+# all_heights$T1_h <- factor(all_heights$T1_h, levels = all_heights$T1_h[order(all_heights$h1)] %>% unique())
+# 
+# q <- ggplot(all_heights, aes(x = T1_h, y = m2)) + geom_boxplot()
+# q_data <- ggplot_build(q) %>% extract2("data")
+# q_points <- tibble(Height_num = all_heights$h1 %>% unique(),
+#                    Height_char = all_heights$T1_h %>% unique(),
+#                    median = q_data[[1]]$middle,
+#                    q3 = q_data[[1]]$upper) %>%
+#   melt(., id.vars = c("Height_num", "Height_char")) %>% as_tibble()
+# 
+# notable_change <- all_heights %>% filter(h1 <= 150) %>%
+#   dplyr::arrange(-m2) %>%
+#   dplyr::select(T1_h, T1_cl, m2) %>%
+#   set_colnames(c("Threshold", "Cluster", "Size change"))
+# 
+# notable_change %>%
+#   DT::datatable(., fillContainer = TRUE, filter = "top", rownames = TRUE,
+#                 options = list(pageLength = nrow(notable_change), dom = "ti", scrollY = "500px",
+#                                columnDefs = list(list(className = "dt-center", targets = 0:3))))
+ranked <- key_clusters %>% filter(Label == "A") %>% dplyr::select(T1_h, T1_cl, T1_cl_wo_novel_size, 
+                                                        T2_h, T2_cl, T2_cl_size, m2, prop, Label) %>% 
+  set_colnames(c("Height at T1", "Cluster at T1", "Initial cluster size", 
+                 "Height at T2", "Cluster at T2", "Cluster size at T2", 
+                 "Change in cluster size", "Proportional growth", "Label"))
+ranked <- ranked[order(ranked$`Proportional growth`, decreasing = TRUE),]
+  
+ranked$`Proportional growth` %<>% scales::percent()
+ranked %>% 
+  DT::datatable(., fillContainer = TRUE, rownames = FALSE, 
+                options = list(pageLength = nrow(ranked), dom = "tif", scrollY = "500px", 
+                               columnDefs = list(list(className = "dt-center", targets = 0:8))))
+```
+
+*** 
+These are the "notable clusters", with label A, ranked by decreasing proportional growth. 
+
+Note that the only other filter is that the initial cluster size is >= 10. We may add a parameter sweep for this filter as well, if necessary.  
+
+**(12/13)**
+
+### ML Component **(13/13)**
+
+```{r}
+x <- key_clusters$Label %>% table() %>% as.data.frame() %>% set_colnames(c("Class", "Freq"))
+```
+
+The minority class rate is `r (min(x$Freq)/sum(x$Freq)) %>% scales::percent()`. 
+
+```{r}
+# df_ml <- key_clusters %>% dplyr::select(h1, T1_cl_wo_novel_size, m2, Label, prop)
+# 
+# train_size <- df_ml %>% nrow() %>% `*`(0.75) %>% round()
+# set.seed(123)
+# train_inds <- sample(x = 1:nrow(df_ml), size = train_size)
+# train_set <- df_ml[train_inds,]
+# test_set <- df_ml[!train_inds,]
+# # Define training control
+# set.seed(123)
+# train.control <- trainControl(method = "repeatedcv",
+#                               number = 10, repeats = 3, sampling = "down")
+# # RVM with linear kernel
+# # Train the model
+# model_lin <- train(Label ~., data = df_ml, method = "svmLinearWeights2",
+#                trControl = train.control)
+# 
+# # Summarize the results
+# # print(model_lin)
+```
+
+```{r}
+df_ml <- key_clusters %>% 
+  dplyr::select(h1, T1_cl_wo_novel_size, m2, Label, prop)
+train_size <- df_ml %>% nrow() %>% `*`(0.75) %>% round()
+
+set.seed(123)
+df_ml$Label %<>% as.factor()
+train_inds <- sample(x = 1:nrow(df_ml), size = train_size)
+train_set <- df_ml[train_inds,]
+test_set <- df_ml[setdiff(1:nrow(df_ml), train_inds),]
+
+set.seed(9560)
+down_train <- downSample(x = dplyr::select(train_set, -Label), y = train_set$Label)
+
+set.seed(9560)
+up_train <- upSample(x = dplyr::select(train_set, -Label), y = train_set$Label)
+
+# table(down_train$Class) %>%
+#   bind_rows(., table(up_train$Class)) %>%
+#   bind_rows(., table(train_set$Label)) %>% as.data.frame() %>%
+#   set_rownames(c("Down sampling", "Up sampling", "Training set")) %>%
+#   set_colnames(c("Class A", "Class B")) %>%
+#   DT::datatable(., caption = "Class frequencies in subsampled sets",
+#                 options = list(dom = "t", columnDefs = list(list(className = "dt-center", targets = 0:1))))
+
+ctrl <- trainControl(method = "repeatedcv", number = 10)
+
+set.seed(5627)
+orig_fit <- train(Label ~ ., data = train_set, 
+                  method = "svmLinearWeights2", 
+                  trControl = ctrl)
+
+down_outside <- train(Label ~ ., data = train_set, 
+                      method = "svmLinearWeights2",
+                      trControl = ctrl)
+
+up_outside <- train(Label ~ ., data = train_set, 
+                    method = "svmLinearWeights2",
+                    trControl = ctrl)
+
+outside_models <- list(original = orig_fit,
+                       down = down_outside,
+                       up = up_outside)
+
+outside_resampling <- resamples(outside_models)
+
+print(outside_models)
+```
+
+```{r}
+test_set$predicted <- caret::predict.train(down_outside, test_set)
+
+a1 <- gsub("A", 2, test_set$Label) %>% gsub("B", 1, .) %>% as.numeric()
+a2 <- gsub("A", 2, test_set$predicted) %>% gsub("B", 1, .) %>% as.numeric()
+incorrect <- which((a1 - a2)!=0) %>% length()
+```
+
+*** 
+
+This is the machine learning component, using L2 Regularized Linear Support Vector Machines with Class Weights. 
+
+As the class we are interested in, Class A (clusters that grow by >= 34% and have initial size >= 10), has a particularly low frequency in our dataset, we took our training set and tried both downsampling and upsampling, to see if this would help prevent our accuracy from being overinflated due to the high proportion of Class B. 
+
+For more details of process see: https://topepo.github.io/caret/subsampling-for-class-imbalances.html.
+
+The training set has frequencies `r table(train_set$Label)[[1]]` (class A) and `r table(train_set$Label)[[2]]` (class B), as it is 75% of the available result data.
+
+The upsampled dataset has frequencies `r table(up_train$Class)[[1]]` (class A) and `r table(up_train$Class)` (class B), and the downsampled dataset has frequencies `r table(down_train$Class)[[1]]` (class A) and `r table(down_train$Class)[[2]]` (class B).
+
+Of the `r nrow(test_set)` cases in the test dataset, `r ((length(a1) - incorrect) / length(a1)) %>% scales::percent()` of the data were accurately predicted using the downsampled training model. 
+
+(Note that in the test dataset, randomly sampled from the available result data, there are `r which(test_set$Label == "A") %>% length()` class A cases, and `r which(test_set$Label == "B") %>% length()` class B).  
+
+**(13/13)**
+
+

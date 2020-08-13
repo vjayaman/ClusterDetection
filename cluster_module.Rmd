@@ -13,23 +13,25 @@ knitr::opts_chunk$set(echo = TRUE)
 # --------------------------------------------------------------------------------
 
 ```{r threshold_files_chunk}
-campy_data <- c("MergedFinal_332calls_4203genomes_clusters.tsv", 
+campy_data <- c("MergedFinal_332calls_4203genomes_clusters.tsv", #"timepoint1_synthetic.tsv", 
                 "MergedFinal_332calls_5075genomes_clusters.tsv")
+
 X <- 1
 Y <- 2
 
-timepoint1 <- read.csv(file = campy_data[1], numerals = "no.loss", 
+# timepoint1 <- read.csv(file = campy_data[1], sep = "\t", stringsAsFactors = FALSE, header = TRUE) %>% as_tibble()
+timepoint1 <- read.csv(file = campy_data[1], numerals = "no.loss",
                        stringsAsFactors = FALSE, sep = "\t") %>% as_tibble()
-colnames(timepoint1) %<>% gsub(pattern = "genome", replacement = "isolate", x = .) %>% 
+colnames(timepoint1) %<>% gsub(pattern = "genome", replacement = "isolate", x = .) %>%
   gsub(pattern = "X", replacement = "h_", x = .)
 
 timepoint2 <- read.csv(file = campy_data[2], numerals = "no.loss", 
                        stringsAsFactors = FALSE, sep = "\t") %>% as_tibble()
 colnames(timepoint2) %<>% gsub(pattern = "genome", replacement = "isolate", x = .) %>% 
   gsub(pattern = "X", replacement = "h_", x = .)
-```
 
-This report looks at the data comparing from  `r campy_data[1] %>% separateText(., "genomes", 1) %>% separateText(., "Final_", 2)`, at time point `r X`, to `r campy_data[2] %>% separateText(., "genomes", 1) %>% separateText(., "Final_", 2)`, at time point `r Y`. Replace the corresponding text in `threshold_files_chunk` if using different data.
+# This report looks at the data comparing from  `r campy_data[1] %>% separateText(., "genomes", 1) %>% separateText(., "Final_", 2)`, at time point `r X`, to `r campy_data[2] %>% separateText(., "genomes", 1) %>% separateText(., "Final_", 2)`, at time point `r Y`. Replace the corresponding text in `threshold_files_chunk` if using different data.
+```
 
 # --------------------------------------------------------------------------------
 
@@ -45,12 +47,12 @@ rm(sizes_for_tpX)
 ```
 
 ```{r tpX_datatable}
-tpX[1:10,] %>% 
-  set_colnames(c("Isolates", "Heights", "Clusters", "Cluster Sizes")) %>% 
-  DT::datatable(., caption = "Sample rows of clusters and sizing", 
-                fillContainer = TRUE, filter = "top", rownames = FALSE, 
-                options = list(pageLength = 50, dom = "ti", scrollY = "500px", 
-                               columnDefs = list(list(className = "dt-center", targets = 1:3))))
+# tpX[1:10,] %>%
+#   set_colnames(c("Isolates", "Heights", "Clusters", "Cluster Sizes")) %>%
+#   DT::datatable(., caption = "Sample rows of clusters and sizing",
+#                 fillContainer = TRUE, filter = "top", rownames = FALSE,
+#                 options = list(pageLength = 50, dom = "ti", scrollY = "500px",
+#                                columnDefs = list(list(className = "dt-center", targets = 1:3))))
 ```
 
 These are the isolates with designated clusters and corresponding cluster sizes at time point `r Y`, for all heights. Sample rows of dataset below.
@@ -61,16 +63,16 @@ clustersY <- timepoint2
 sizes_for_tpY <- clusterSizes(clustersY)
 tpY <- isolateClusterSize(clustersY, sizes_for_tpY) %>%
   set_colnames(c("isolate", "heights", "tpY_clusters", "tpY_sizes"))
-rm(sizes_for_tpY)
+# rm(sizes_for_tpY)
 ```
 
 ```{r tpY_datatable}
-tpY[1:10,] %>% 
-  set_colnames(c("Isolates", "Heights", "Clusters", "Cluster Sizes")) %>% 
-  DT::datatable(., caption = "Sample rows of clusters and sizing", 
-                fillContainer = TRUE, filter = "top", rownames = FALSE, 
-                options = list(pageLength = 50, dom = "ti", scrollY = "500px", 
-                               columnDefs = list(list(className = "dt-center", targets = 1:3))))
+# tpY[1:10,] %>% 
+#   set_colnames(c("Isolates", "Heights", "Clusters", "Cluster Sizes")) %>% 
+#   DT::datatable(., caption = "Sample rows of clusters and sizing", 
+#                 fillContainer = TRUE, filter = "top", rownames = FALSE, 
+#                 options = list(pageLength = 50, dom = "ti", scrollY = "500px", 
+#                                columnDefs = list(list(className = "dt-center", targets = 1:3))))
 ```
 
 Some isolates occur in only one of the two time point datasets, so the following is to keep track of this.
@@ -105,6 +107,86 @@ d %>% set_colnames(c("Isolates", paste0("Found in time point ", X, " dataset"),
   formatStyle(2, backgroundColor = styleEqual(vals, c("lightsteelblue", "gray"))) %>%
   formatStyle(3, backgroundColor = styleEqual(vals, c("lightgreen", "gray"))) %>%
   formatStyle(4, backgroundColor = styleEqual(vals, c("lightsteelblue", "gray")))
+```
+
+```{r}
+d[which(d$TPX == "False"),] %>% 
+  set_colnames(c("Isolates", paste0("Found in time point ", X, " dataset"),
+                     paste0("Found in time point ", Y, " dataset"), "Found in both datasets")) %>%
+  DT::datatable(., fillContainer = TRUE, filter = "top", rownames = TRUE,
+                options = list(pageLength = nrow(d), dom = "ti", scrollY = "500px")) %>%
+  formatStyle(2, backgroundColor = styleEqual(vals, c("lightsteelblue", "gray"))) %>%
+  formatStyle(3, backgroundColor = styleEqual(vals, c("lightgreen", "gray"))) %>%
+  formatStyle(4, backgroundColor = styleEqual(vals, c("lightsteelblue", "gray")))
+```
+
+```{r}
+# isolates at time point 2 and not time point 1
+isolates_t2 <- d$Isolates[which(d$TPX == "False")] %>% as.character()
+# isolates at time point 1
+isolates_t1 <- d$Isolates[which(d$TPX == "True")] %>% as.character()
+```
+
+Want to find the first threshold where a new genome (added at time point 2) is part of a multistrain cluster that includes genomes from time point 1.
+1) isolate_k is the kth isolate of those that are introduced at time point 2
+2) we filter the time point 2 dataset to only contain isolate_k and all height-cluster pairs where isolate_k is found in a cluster of size > 1 - we call this filtered dataset the "candidate set"
+3) then for each row of the candidate set (each height-cluster pair), we filter the time point 2 dataset to show all isolates found in the selected cluster at the selected height - "candidate isolates"
+4) if any of these isolates were present in the time point 1 dataset, we return isolate_k-height-cluster as a success
+  5) if none of the isolates were present in the time point 1 dataset, we move onto the next height-cluster pair in the candidate set
+
+```{r}
+df <- lapply(1:length(isolates_t2), function(k) {
+  isolate_k <- isolates_t2[k]
+  paste0("isolate ", k, "/", length(isolates_t2)) %>% print()
+  candidates <- tpY %>% filter(isolate == isolate_k) %>% filter(tpY_sizes > 1)
+  
+  j <- FALSE
+  i <- 1
+  
+  while (j == FALSE & i < nrow(candidates)) {
+    paste0("   ", i, "/", nrow(candidates)) %>% print()
+    cluster_cand <- candidates$tpY_clusters[i]
+    height_cand <- candidates$heights[i]
+  
+    isolate_cand <- timepoint2 %>% 
+      dplyr::select(isolate, all_of(height_cand)) %>% 
+      set_colnames(c("isolate","h")) %>% 
+      filter(h == cluster_cand) %>% pull(isolate)
+    
+    if (any(isolate_cand %in% isolates_t1)) {
+      return(tibble(isolate_k, height_cand, cluster_cand))
+      j <- TRUE
+    }
+    i <- i + 1
+  }
+}) %>% bind_rows()
+```
+
+
+```{r}
+h_c <- df$height_cand[1]
+c_c <- df$cluster_cand[1]
+
+
+df$sizes <- lapply(1:nrow(df), function(i) {
+  h_c <- df$height_cand[i]
+  c_c <- df$cluster_cand[i]
+  sizes_for_tpY %>% dplyr::select(cluster, all_of(h_c)) %>% 
+    filter(cluster == c_c) %>% pull(h_c) %>% return()
+}) %>% unlist()
+```
+
+```{r}
+# tmp <- df
+df$h <- lapply(df$height_cand, function(h) strsplit(h, split = "_") %>% unlist() %>% extract2(2) %>% as.numeric) %>% 
+  unlist()
+df$Isolates <- 1:nrow(df)
+df %>% DT::datatable()
+```
+
+```{r}
+df2 <- df[,c(5,1,2,4,3,6)] %>% set_colnames(c("Genome_number", "New_genome_at_T2", "Height_char", "Height_num", "Cluster", "Cluster_size"))
+ggplot(df2, aes(x = Isolates, y = h)) + geom_point()
 ```
 
 
@@ -170,33 +252,6 @@ tp[1:100,c(1,3:9)] %>% # -"Numeric height",
                 fillContainer = TRUE, filter = "top", rownames = FALSE, 
                 options = list(pageLength = 50, dom = "ti", scrollY = "500px", 
                                columnDefs = list(list(className = "dt-center", targets = 1:7))))
-```
-
-Table of heights and clusters, with specific (and at the moment arbitrary) requirements. Goal: to identify what kind of change in size can be expected, given the number of isolates at each time point, the number of clusters at a height (will need to check a variety of heights, maybe a randomly selected set), and inflation of false positives due to multiple comparison testing (WIP). 
-
-```{r}
-min_size <- 20  # minimum initial cluster size to filter for
-min_dif <- 100  # minimum change in cluster size to filter for
-```
-
-```{r, warning=FALSE}
-df_expanding <- tp %>% 
-  filter(tpX_sizes >= min_size) %>% 
-  filter(both == "larger") %>% 
-  filter(size_difference > min_dif) %>% 
-  dplyr::select(h, heights, tpX_clusters, tpX_sizes, tpY_clusters, tpY_sizes, size_difference) %>% 
-  unique()
-
-df_expanding[,2:7] %>% # - "Numeric height", 
-  set_colnames(c("Height label", paste0("Cluster at time point ", X), 
-                 paste0("Cluster size at time point ", X), paste0("Cluster at time point ", Y), 
-                 paste0("Cluster size at time point ", Y), "Difference in size")) %>% 
-  DT::datatable(., caption = paste0("Clusters that have size >= ", min_size, 
-                                    " and change in size ", "from TP", X, 
-                                    " to TP", Y, " by at least ", min_dif, " isolates"), 
-                fillContainer = TRUE, filter = "top", rownames = TRUE, 
-                options = list(pageLength = nrow(df_expanding), dom = "ti", scrollY = "500px", 
-                               columnDefs = list(list(className = "dt-center", targets = 0:6))))
 ```
 
 # --------------------------------------------------------------------------------
@@ -277,4 +332,31 @@ smaller_eg[order(smaller_eg$both, decreasing = TRUE),] %>%
                                columnDefs = list(list(className = "dt-center", targets = 1:7))))
 ```
 
+# --------------------------------------------------------------------------------
 
+Table of heights and clusters, with specific (and at the moment arbitrary) requirements. Goal: to identify what kind of change in size can be expected, given the number of isolates at each time point, the number of clusters at a height (will need to check a variety of heights, maybe a randomly selected set), and inflation of false positives due to multiple comparison testing (WIP). 
+
+```{r}
+min_size <- 20  # minimum initial cluster size to filter for
+min_dif <- 100  # minimum change in cluster size to filter for
+```
+
+```{r, warning=FALSE}
+df_expanding <- tp %>% 
+  filter(tpX_sizes >= min_size) %>% 
+  filter(both == "larger") %>% 
+  filter(size_difference > min_dif) %>% 
+  dplyr::select(h, heights, tpX_clusters, tpX_sizes, tpY_clusters, tpY_sizes, size_difference) %>% 
+  unique()
+
+df_expanding[,2:7] %>% # - "Numeric height", 
+  set_colnames(c("Height label", paste0("Cluster at time point ", X), 
+                 paste0("Cluster size at time point ", X), paste0("Cluster at time point ", Y), 
+                 paste0("Cluster size at time point ", Y), "Difference in size")) %>% 
+  DT::datatable(., caption = paste0("Clusters that have size >= ", min_size, 
+                                    " and change in size ", "from TP", X, 
+                                    " to TP", Y, " by at least ", min_dif, " isolates"), 
+                fillContainer = TRUE, filter = "top", rownames = TRUE, 
+                options = list(pageLength = nrow(df_expanding), dom = "ti", scrollY = "500px", 
+                               columnDefs = list(list(className = "dt-center", targets = 0:6))))
+```

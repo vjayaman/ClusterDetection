@@ -3,8 +3,12 @@
 
 x <- c("tibble", "magrittr", "dplyr", "ggplot2", "reshape2","plotly", "tidyverse", 
        "DT", "ggpubr", "rcompanion", "fitdistrplus", "logspline", "gamlss",
-       "goftest", "kableExtra", "EnvStats")
+       "goftest", "kableExtra", "EnvStats", "pracma", "e1071", "kernlab", "caret", 
+       "LiblineaR", "gridExtra", "transformr", "gifski", "gganimate", "fitdistrplus", 
+       "flexdashboard")
 lapply(x, require, character.only = TRUE)
+
+get <- .Primitive("[[")
 
 separateText <- function(txt, sp, i) {
   strsplit(txt, split = sp) %>% unlist() %>% extract2(i) %>% return()
